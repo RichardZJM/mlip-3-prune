@@ -9,12 +9,11 @@ mkdir -p "$OUT_DIR"
 # That warning is vestigial — these commands do not overwrite potentials.
 
 # This command extracts the necessary inputs to run the evolutionary algorithm.
-# Specifically, it produces the XTWX matrix (binary file), XTWY vector (binary file),
-# YTY (scalar), and the average number of neighbours (scalar).
+# Specifically, it produces the XTWX matrix (binary file), XTWy vector (binary file),
+# yTWy (scalar), and the average number of neighbours (scalar).
 # Scalars are printed to the console.
 # extract_problem takes the same options as the mlp train command. 
-# This is only relevant if the options affect the loss, 
-# such as using different weights for energies and forces.
+# This is only relevant if the options affect the loss, such as using different weights for energies and forces.
 
 "$MLP_EXE" extract_problem ni20.almtp train.cfg "$OUT_DIR"/xtwx.bin "$OUT_DIR"/xtwy.bin 
 

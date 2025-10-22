@@ -299,7 +299,7 @@ void MTPR_trainer::WriteProblem(std::string &matrix_file, std::string &vector_fi
               << " bytes to vector file: " << vector_file << std::endl;
 
     // Print lin_scalar to standard output with high precision.
-    std::cout << "Sum of Squared Ground Truths (yTy): " << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
+    std::cout << "Sum of Squared Ground Truths (yTWy): " << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
 }
 
 void MTPR_trainer::LinOptimize(vector<Configuration> &training_set)

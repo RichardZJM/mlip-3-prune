@@ -20,8 +20,8 @@ This fork introduces two additional commands to the `mlp` binary to support [MTP
    And outputs:
 
    - The $\mathbf{X}^\intercal\mathbf{WX}$ matrix (binary file)
-   - The $\mathbf{X}^\intercal\mathbf{WY}$ vector (binary file)
-   - The $\mathbf{Y}^\intercal\mathbf{Y}$ value (scalar)
+   - The $\mathbf{X}^\intercal\mathbf{Wy}$ vector (binary file)
+   - The $\mathbf{y}^\intercal\mathbf{Wy}$ value (scalar)
    - The average number of neighbors (scalar)
 
    The binary files are written to the specified paths, and the scalar values are printed to the command line.
