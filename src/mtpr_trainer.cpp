@@ -8,6 +8,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cstring>
+#include <Eigen/Dense>
 
 using namespace std;
 
@@ -654,6 +655,7 @@ void MTPR_trainer::NonLinOptimize(std::vector<Configuration> &training_set, int 
         logstrm1.str("");
     }
 }
+
 void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
 {
 
@@ -874,136 +876,264 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
                                   const std::string &vector_file)
 {
     ClearSLAE();
-    bfgs_g.resize(p_mlmtpr->CoeffCount());
-
-    for (auto &cfg : training_set)
-        AddToSLAE(cfg);
 
     int m = static_cast<int>(training_set.size());
     int K = m;
+    double local_lin_scalar = 0.0;
 
 #ifdef MLIP_MPI
     MPI_Allreduce(&m, &K, 1, MPI_INT, MPI_SUM, mpi.comm);
-    double scalar = 0.0;
-    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
+#endif
 
-    if (mpi.rank == 0)
+    const int N_params = p_mlmtpr->CoeffCount();
+    const int n_lin = p_mlmtpr->LinSize();
+    const int n_nl = p_mlmtpr->Rsize();
+
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(N_params, N_params);
+    Eigen::VectorXd g = Eigen::VectorXd::Zero(N_params);
+
+    // -----------------------------------------------------------------------
+    // Phase 1: Build H and g
+    // -----------------------------------------------------------------------
+    for (auto &cfg : training_set)
     {
-        lin_matrix_mpi.resize(n * n);
-        lin_vector_mpi.resize(n);
-        std::fill(lin_matrix_mpi.begin(), lin_matrix_mpi.end(), 0);
-        std::fill(lin_vector_mpi.begin(), lin_vector_mpi.end(), 0);
+        if (cfg.nbh_cutoff != p_mlmtpr->p_RadialBasis->max_val)
+            cfg.InitNbhs(p_mlmtpr->p_RadialBasis->max_val);
+
+        if (cfg.nbhs.empty())
+            continue;
+
+        const int cfg_size = cfg.size();
+
+        Eigen::VectorXd J_E = Eigen::VectorXd::Zero(N_params);
+        Eigen::MatrixXd J_F = Eigen::MatrixXd::Zero(3 * cfg_size, N_params);
+        Eigen::MatrixXd J_S = Eigen::MatrixXd::Zero(9, N_params);
+
+        for (int ind = 0; ind < (int)cfg.nbhs.size(); ind++)
+        {
+            Neighborhood &nbh = cfg.nbhs[ind];
+
+            std::vector<double> grad_E_nbh;
+            p_mlmtpr->AccumulateCombinationGrad(nbh, grad_E_nbh, 1.0, nullptr);
+            for (int p = 0; p < N_params; ++p)
+                J_E(p) += grad_E_nbh[p];
+
+            if ((wgt_eqtn_forces > 0 && cfg.has_forces()) ||
+                (wgt_eqtn_stress > 0 && cfg.has_stresses()))
+            {
+                for (int j = 0; j < nbh.count; ++j)
+                {
+                    for (int a = 0; a < 3; ++a)
+                    {
+                        std::vector<Vector3> se_ders_weights(nbh.count, Vector3(0, 0, 0));
+                        se_ders_weights[j][a] = 1.0;
+
+                        std::vector<double> grad_V_rja;
+                        p_mlmtpr->AccumulateCombinationGrad(nbh, grad_V_rja, 0.0, se_ders_weights.data());
+
+                        int central_idx = nbh.my_ind;
+                        int neigh_idx = nbh.inds[j];
+
+                        for (int p = 0; p < N_params; ++p)
+                        {
+                            double val = grad_V_rja[p];
+                            if (wgt_eqtn_forces > 0 && cfg.has_forces())
+                            {
+                                J_F(3 * central_idx + a, p) += val;
+                                if (neigh_idx >= 0 && neigh_idx < cfg_size)
+                                    J_F(3 * neigh_idx + a, p) -= val;
+                            }
+                            if (wgt_eqtn_stress > 0 && cfg.has_stresses())
+                            {
+                                for (int b = 0; b < 3; ++b)
+                                    J_S(a * 3 + b, p) -= val * nbh.vecs[j][b];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        double weight = 1.0;
+        int fn = norm_by_forces;
+        double d = 0.1;
+        double avef = 0.0;
+
+        if (cfg.has_forces())
+            for (int i = 0; i < cfg_size; i++)
+                avef += cfg.force(i).NormSq() / cfg_size;
+
+        const double common_weight = weight * d / (d + fn * avef);
+
+        if (cfg.has_energy())
+        {
+            double W_E = common_weight * wgt_energy(cfg);
+            if (W_E > 0.0)
+            {
+                H.noalias() += W_E * J_E * J_E.transpose();
+                g.noalias() += W_E * cfg.energy * J_E;
+                local_lin_scalar += W_E * cfg.energy * cfg.energy;
+            }
+        }
+
+        if (wgt_eqtn_forces > 0 && cfg.has_forces())
+        {
+            for (int i = 0; i < cfg_size; i++)
+            {
+                for (int a = 0; a < 3; a++)
+                {
+                    double W_F = common_weight * wgt_forces(cfg, i, a);
+                    if (W_F > 0.0)
+                    {
+                        auto row = J_F.row(3 * i + a);
+                        double val = cfg.force(i, a);
+                        H.noalias() += W_F * row.transpose() * row;
+                        g.noalias() += W_F * val * row;
+                        local_lin_scalar += W_F * val * val;
+                    }
+                }
+            }
+        }
+
+        if (wgt_eqtn_stress > 0 && cfg.has_stresses())
+        {
+            for (int a = 0; a < 3; a++)
+            {
+                for (int b = 0; b < 3; b++)
+                {
+                    double W_S = weight * wgt_stress(cfg, a, b);
+                    if (W_S > 0.0)
+                    {
+                        auto row = J_S.row(a * 3 + b);
+                        double val = cfg.stresses[a][b];
+                        H.noalias() += W_S * row.transpose() * row;
+                        g.noalias() += W_S * val * row;
+                        local_lin_scalar += W_S * val * val;
+                    }
+                }
+            }
+        }
     }
 
-    MPI_Reduce(lin_matrix.data(), lin_matrix_mpi.data(), n * n, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-    MPI_Reduce(lin_vector.data(), lin_vector_mpi.data(), n, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-    MPI_Reduce(&lin_scalar, &scalar, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    // -----------------------------------------------------------------------
+    // Phase 2: MPI reduction
+    // -----------------------------------------------------------------------
+    double global_lin_scalar = local_lin_scalar;
+    Eigen::MatrixXd H_global = Eigen::MatrixXd::Zero(N_params, N_params);
+    Eigen::VectorXd g_global = Eigen::VectorXd::Zero(N_params);
 
-    if (mpi.rank == 0)
+#ifdef MLIP_MPI
+    MPI_Reduce(&local_lin_scalar, &global_lin_scalar, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    MPI_Reduce(H.data(), H_global.data(), N_params * N_params, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    MPI_Reduce(g.data(), g_global.data(), N_params, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+#else
+    H_global = std::move(H);
+    g_global = std::move(g);
+#endif
+
+    bool is_root = true;
+#ifdef MLIP_MPI
+    is_root = (mpi.rank == 0);
+#endif
+
+    if (is_root)
     {
-        std::memcpy(lin_matrix.data(), lin_matrix_mpi.data(), n * n * sizeof(double));
-        std::memcpy(lin_vector.data(), lin_vector_mpi.data(), n * sizeof(double));
-        lin_scalar = scalar;
+        // -------------------------------------------------------------------
+        // Phase 3: Schur complement
+        // H = [ H_NLNL   H_NLL ]
+        //     [ H_NLL^T  H_LL  ]
+        // -------------------------------------------------------------------
+        Eigen::MatrixXd H_NLNL = H_global.block(0, 0, n_nl, n_nl);
+        Eigen::MatrixXd H_NLL = H_global.block(0, n_nl, n_nl, n_lin);
+        Eigen::MatrixXd H_LL = H_global.block(n_nl, n_nl, n_lin, n_lin);
+        Eigen::VectorXd g_NL = g_global.segment(0, n_nl);
+        Eigen::VectorXd g_L = g_global.segment(n_nl, n_lin);
 
-        SymmetrizeSLAE();
+        Eigen::LDLT<Eigen::MatrixXd> ldlt_NLNL(H_NLNL);
+        if (ldlt_NLNL.info() != Eigen::Success)
+            std::cerr << "WARNING: H_NLNL decomposition failed. Matrix may be singular." << std::endl;
 
+        Eigen::MatrixXd C = ldlt_NLNL.solve(H_NLL);
+        Eigen::VectorXd dv = ldlt_NLNL.solve(g_NL);
+
+        // Schur complement for linear block (used internally for solving)
+        Eigen::MatrixXd S_LL = H_LL - H_NLL.transpose() * C;
+        Eigen::VectorXd g_S = g_L - H_NLL.transpose() * dv;
+
+        // -------------------------------------------------------------------
+        // Regularization (applied to S_LL for internal solve only)
+        // -------------------------------------------------------------------
         int TS_size = K;
+        auto get_diag = [&](int i)
+        { return S_LL(i, i); };
 
         if (!reg_init)
-            for (int i = 0; i < n; i++)
-                if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
-                    (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
+        {
+            for (int i = 0; i < n_lin; i++)
+            {
+                double diag = std::max(1.0, get_diag(i));
+                if (p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * diag / TS_size ||
+                    p_mlmtpr->reg_vector[i] > 1e2 * reg_param * diag / TS_size)
                 {
                     reg_init = true;
                     break;
                 }
+            }
+        }
 
         if (reg_init)
-            for (int i = 0; i < n; i++)
-                p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+            for (int i = 0; i < n_lin; i++)
+                p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, get_diag(i)) / TS_size;
 
-        for (int i = 0; i < n; i++)
-            lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
+        for (int i = 0; i < n_lin; i++)
+            S_LL(i, i) += p_mlmtpr->reg_vector[i] * TS_size;
 
-        // --- Write matrix and vector ---
-        std::ofstream matrix_stream(matrix_file, std::ios::binary);
-        if (!matrix_stream)
+        // -------------------------------------------------------------------
+        // Solve for linear coefficients
+        // -------------------------------------------------------------------
+        Eigen::LDLT<Eigen::MatrixXd> ldlt_SLL(S_LL);
+        if (ldlt_SLL.info() != Eigen::Success)
+            std::cerr << "WARNING: S_LL decomposition failed." << std::endl;
+
+        Eigen::VectorXd x_L = ldlt_SLL.solve(g_S);
+
+        // -------------------------------------------------------------------
+        // Back-substitute to recover non-linear update
+        // x_NL = H_NLNL^{-1} * (g_NL - H_NLL * x_L)
+        // -------------------------------------------------------------------
+        Eigen::VectorXd x_NL = ldlt_NLNL.solve(g_NL - H_NLL * x_L);
+
+        // Update non-linear coefficients directly in the model
+        double *coeffs = p_mlmtpr->Coeff();
+        for (int i = 0; i < n_nl; i++)
+            coeffs[i] = x_NL(i);
+
+        // -------------------------------------------------------------------
+        // File output: use global (undeflated) H_LL and g_L so that Python
+        // SSE = global_lin_scalar - theta @ g_L  is directly comparable with
+        // the frozen-nonlinear baseline and across different runs.
+        // -------------------------------------------------------------------
+        lin_scalar = global_lin_scalar;
+        lin_matrix.assign(H_LL.data(), H_LL.data() + n_lin * n_lin);
+        lin_vector.assign(g_L.data(), g_L.data() + n_lin);
+
+        auto write_binary = [](const std::string &path, const std::vector<double> &data)
         {
-            std::cerr << "ERROR: Failed to open matrix file for writing: " << matrix_file << std::endl;
-            return;
-        }
-        matrix_stream.write(reinterpret_cast<const char *>(lin_matrix.data()),
-                            lin_matrix.size() * sizeof(double));
-        matrix_stream.close();
-        std::cout << "Successfully wrote " << lin_matrix.size() * sizeof(double)
-                  << " bytes to matrix file: " << matrix_file << std::endl;
+            std::ofstream os(path, std::ios::binary);
+            if (!os)
+                return false;
+            os.write(reinterpret_cast<const char *>(data.data()), data.size() * sizeof(double));
+            return true;
+        };
 
-        std::ofstream vector_stream(vector_file, std::ios::binary);
-        if (!vector_stream)
-        {
-            std::cerr << "ERROR: Failed to open vector file for writing: " << vector_file << std::endl;
-            return;
-        }
-        vector_stream.write(reinterpret_cast<const char *>(lin_vector.data()),
-                            lin_vector.size() * sizeof(double));
-        vector_stream.close();
-        std::cout << "Successfully wrote " << lin_vector.size() * sizeof(double)
-                  << " bytes to vector file: " << vector_file << std::endl;
+        if (write_binary(matrix_file, lin_matrix))
+            std::cout << "Wrote matrix: " << matrix_file << std::endl;
+        if (write_binary(vector_file, lin_vector))
+            std::cout << "Wrote vector: " << vector_file << std::endl;
 
-        std::cout << "Sum of Squared Ground Truths (yTWy): "
-                  << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
+        std::cout << "yTWy: "
+                  << std::fixed << std::setprecision(15) << global_lin_scalar << std::endl;
     }
-
-#else
-    SymmetrizeSLAE();
-
-    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
-    int TS_size = K;
-
-    if (!reg_init)
-        for (int i = 0; i < n; i++)
-            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
-                (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
-            {
-                reg_init = true;
-                break;
-            }
-
-    if (reg_init)
-        for (int i = 0; i < n; i++)
-            p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
-
-    for (int i = 0; i < n; i++)
-        lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
-
-    // --- Write matrix and vector (merged WriteProblem) ---
-    std::ofstream matrix_stream(matrix_file, std::ios::binary);
-    if (!matrix_stream)
-    {
-        std::cerr << "ERROR: Failed to open matrix file for writing: " << matrix_file << std::endl;
-        return;
-    }
-    matrix_stream.write(reinterpret_cast<const char *>(lin_matrix.data()),
-                        lin_matrix.size() * sizeof(double));
-    matrix_stream.close();
-    std::cout << "Successfully wrote " << lin_matrix.size() * sizeof(double)
-              << " bytes to matrix file: " << matrix_file << std::endl;
-
-    std::ofstream vector_stream(vector_file, std::ios::binary);
-    if (!vector_stream)
-    {
-        std::cerr << "ERROR: Failed to open vector file for writing: " << vector_file << std::endl;
-        return;
-    }
-    vector_stream.write(reinterpret_cast<const char *>(lin_vector.data()),
-                        lin_vector.size() * sizeof(double));
-    vector_stream.close();
-    std::cout << "Successfully wrote " << lin_vector.size() * sizeof(double)
-              << " bytes to vector file: " << vector_file << std::endl;
-
-    std::cout << "Sum of Squared Ground Truths (yTWy): "
-              << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
-#endif
 }
 
 double MTPR_trainer::FindLoss(std::vector<Configuration> &training_set)

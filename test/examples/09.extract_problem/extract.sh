@@ -12,7 +12,7 @@ mkdir -p "$OUT_DIR"
 # extract_problem takes the same options as the mlp train command. 
 # This is only relevant if the options affect the loss, such as using different weights for energies and forces.
 
-"$MLP_EXE" extract_problem ni20.almtp train.cfg "$OUT_DIR"/xtwx.bin "$OUT_DIR"/xtwy.bin 
+mpirun -np 8 "$MLP_EXE" extract_problem ni20.almtp train.cfg "$OUT_DIR"/xtwx.bin "$OUT_DIR"/xtwy.bin 
 
 # Calculate loss. This is a convenience function that exposes the objective function 
 # to facilitate comparisons between potentials.
