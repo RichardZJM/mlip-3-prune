@@ -12,7 +12,7 @@
 
 using namespace std;
 
-void NonLinearRegression::AddLoss(Configuration &orig)
+void NonLinearRegression::AddLoss(Configuration &orig, bool penalize)
 {
     if (orig.nbh_cutoff != p_mlip->CutOff())
         orig.InitNbhs(p_mlip->CutOff());
@@ -45,7 +45,8 @@ void NonLinearRegression::AddLoss(Configuration &orig)
             for (int b = 0; b < 3; b++)
                 loss_ += wgt_stress(orig, a, b) * pow(orig.stresses[a][b] - cfg.stresses[a][b], 2);
 
-    // p_mlip->AddPenaltyGrad(wgt_eqtn_constr, loss_); // don't need this for find loss.
+    if (penalize)
+        p_mlip->AddPenaltyGrad(wgt_eqtn_constr, loss_);
 
     // it is important to add energy latest - less round-off errors this way
     if (wgt_eqtn_energy != 0 && orig.has_energy())
@@ -120,11 +121,11 @@ void NonLinearRegression::AddLossGrad(Configuration &orig)
 }
 
 // Calculates objective function summed over train_set
-double NonLinearRegression::ObjectiveFunction(vector<Configuration> &training_set)
+double NonLinearRegression::ObjectiveFunction(vector<Configuration> &training_set, bool penalize)
 {
     loss_ = 0.0;
     for (Configuration &cfg : training_set)
-        AddLoss(cfg);
+        AddLoss(cfg, penalize);
     return loss_;
 }
 

@@ -7,6 +7,7 @@
 #include "mtpr_trainer.h"
 #include <sstream>
 #include <algorithm>
+#include <cstring>
 
 using namespace std;
 
@@ -178,132 +179,9 @@ void MTPR_trainer::AddToSLAE(Configuration &cfg, double weight)
     }
 }
 
-void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set, std::string &matrix_file, std::string &vector_file)
-{
-    ClearSLAE();
-    bfgs_g.resize(p_mlmtpr->CoeffCount()); // resize the gradient of BFGS
-
-    ClearSLAE();
-
-    for (auto &cfg : training_set)
-        AddToSLAE(cfg);
-
-    int m = (int)training_set.size(); // train set size on the current core
-    int K = m;                        // train set size over all cores
-
-#ifdef MLIP_MPI
-    MPI_Allreduce(&m, &K, 1, MPI_INT, MPI_SUM, mpi.comm);
-#endif
-
-#ifdef MLIP_MPI
-    double scalar = 0;
-
-    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count; // Matrix size
-
-    if (mpi.rank == 0)
-    {
-        // TODO: get rid of new
-        lin_matrix_mpi.resize(n * n);
-        lin_vector_mpi.resize(n);
-        std::fill(lin_matrix_mpi.begin(), lin_matrix_mpi.end(), 0);
-        std::fill(lin_vector_mpi.begin(), lin_vector_mpi.end(), 0);
-    }
-
-    MPI_Reduce(&lin_matrix[0], &lin_matrix_mpi[0], n * n, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-    MPI_Reduce(&lin_vector[0], &lin_vector_mpi[0], n, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-    MPI_Reduce(&lin_scalar, &scalar, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-
-    if (mpi.rank == 0) // we solve the SLAE in serial and then broadcast the results
-    {
-        memcpy(&lin_matrix[0], &lin_matrix_mpi[0], n * n * sizeof(double));
-        memcpy(&lin_vector[0], &lin_vector_mpi[0], n * sizeof(double));
-        lin_scalar = scalar;
-
-        SymmetrizeSLAE();
-
-        int TS_size = K; // Use K, which is the total training set size
-
-        if (!reg_init)
-            for (int i = 0; i < n; i++)
-                if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size) || (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size))
-                {
-                    reg_init = true;
-                    break;
-                }
-
-        if (reg_init)
-            for (int i = 0; i < n; i++)
-                p_mlmtpr->reg_vector[i] = reg_param * __max(1, lin_matrix[i * n + i]) / TS_size;
-
-        // Apply regularization to the diagonal of the matrix
-        for (int i = 0; i < n; i++)
-            lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
-
-        WriteProblem(matrix_file, vector_file);
-    }
-
-#else
-    SymmetrizeSLAE();
-
-    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
-    int TS_size = K;
-
-    if (!reg_init)
-        for (int i = 0; i < n; i++)
-            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size) || (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size))
-            {
-                reg_init = true;
-                break;
-            }
-
-    if (reg_init)
-        for (int i = 0; i < n; i++)
-            p_mlmtpr->reg_vector[i] = reg_param * __max(1, lin_matrix[i * n + i]) / TS_size;
-
-    // Apply regularization
-    for (int i = 0; i < n; i++)
-        lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
-
-    WriteProblem(matrix_file, vector_file);
-#endif
-}
-
-void MTPR_trainer::WriteProblem(std::string &matrix_file, std::string &vector_file)
-{
-    // Write matrix to binary
-    std::ofstream matrix_stream(matrix_file, std::ios::out | std::ios::binary);
-    if (!matrix_stream.is_open())
-    {
-        std::cerr << "ERROR: Failed to open matrix file for writing: " << matrix_file << std::endl;
-        return;
-    }
-    matrix_stream.write(
-        reinterpret_cast<const char *>(lin_matrix.data()),
-        lin_matrix.size() * sizeof(double));
-    matrix_stream.close();
-    std::cout << "Successfully wrote " << lin_matrix.size() * sizeof(double)
-              << " bytes to matrix file: " << matrix_file << std::endl;
-
-    //  Write the Vector to a Binary
-    std::ofstream vector_stream(vector_file, std::ios::out | std::ios::binary);
-    if (!vector_stream.is_open())
-    {
-        std::cerr << "ERROR: Failed to open vector file for writing: " << vector_file << std::endl;
-        return;
-    }
-    vector_stream.write(
-        reinterpret_cast<const char *>(lin_vector.data()),
-        lin_vector.size() * sizeof(double));
-    vector_stream.close();
-    std::cout << "Successfully wrote " << lin_vector.size() * sizeof(double)
-              << " bytes to vector file: " << vector_file << std::endl;
-
-    // Print lin_scalar to standard output with high precision.
-    std::cout << "Sum of Squared Ground Truths (yTWy): " << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
-}
-
 void MTPR_trainer::LinOptimize(vector<Configuration> &training_set)
 {
+    p_mlmtpr->Orthogonalize(); // orthogonalize the radial functions
 
     ClearSLAE();
 
@@ -991,10 +869,147 @@ void MTPR_trainer::Train(std::vector<Configuration> &training_set)
     MPI_Barrier(mpi.comm);
 }
 
+void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
+                                  const std::string &matrix_file,
+                                  const std::string &vector_file)
+{
+    ClearSLAE();
+    bfgs_g.resize(p_mlmtpr->CoeffCount());
+
+    for (auto &cfg : training_set)
+        AddToSLAE(cfg);
+
+    int m = static_cast<int>(training_set.size());
+    int K = m;
+
+#ifdef MLIP_MPI
+    MPI_Allreduce(&m, &K, 1, MPI_INT, MPI_SUM, mpi.comm);
+    double scalar = 0.0;
+    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
+
+    if (mpi.rank == 0)
+    {
+        lin_matrix_mpi.resize(n * n);
+        lin_vector_mpi.resize(n);
+        std::fill(lin_matrix_mpi.begin(), lin_matrix_mpi.end(), 0);
+        std::fill(lin_vector_mpi.begin(), lin_vector_mpi.end(), 0);
+    }
+
+    MPI_Reduce(lin_matrix.data(), lin_matrix_mpi.data(), n * n, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    MPI_Reduce(lin_vector.data(), lin_vector_mpi.data(), n, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    MPI_Reduce(&lin_scalar, &scalar, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+
+    if (mpi.rank == 0)
+    {
+        std::memcpy(lin_matrix.data(), lin_matrix_mpi.data(), n * n * sizeof(double));
+        std::memcpy(lin_vector.data(), lin_vector_mpi.data(), n * sizeof(double));
+        lin_scalar = scalar;
+
+        SymmetrizeSLAE();
+
+        int TS_size = K;
+
+        if (!reg_init)
+            for (int i = 0; i < n; i++)
+                if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
+                    (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
+                {
+                    reg_init = true;
+                    break;
+                }
+
+        if (reg_init)
+            for (int i = 0; i < n; i++)
+                p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+
+        for (int i = 0; i < n; i++)
+            lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
+
+        // --- Write matrix and vector ---
+        std::ofstream matrix_stream(matrix_file, std::ios::binary);
+        if (!matrix_stream)
+        {
+            std::cerr << "ERROR: Failed to open matrix file for writing: " << matrix_file << std::endl;
+            return;
+        }
+        matrix_stream.write(reinterpret_cast<const char *>(lin_matrix.data()),
+                            lin_matrix.size() * sizeof(double));
+        matrix_stream.close();
+        std::cout << "Successfully wrote " << lin_matrix.size() * sizeof(double)
+                  << " bytes to matrix file: " << matrix_file << std::endl;
+
+        std::ofstream vector_stream(vector_file, std::ios::binary);
+        if (!vector_stream)
+        {
+            std::cerr << "ERROR: Failed to open vector file for writing: " << vector_file << std::endl;
+            return;
+        }
+        vector_stream.write(reinterpret_cast<const char *>(lin_vector.data()),
+                            lin_vector.size() * sizeof(double));
+        vector_stream.close();
+        std::cout << "Successfully wrote " << lin_vector.size() * sizeof(double)
+                  << " bytes to vector file: " << vector_file << std::endl;
+
+        std::cout << "Sum of Squared Ground Truths (yTWy): "
+                  << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
+    }
+
+#else
+    SymmetrizeSLAE();
+
+    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
+    int TS_size = K;
+
+    if (!reg_init)
+        for (int i = 0; i < n; i++)
+            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
+                (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
+            {
+                reg_init = true;
+                break;
+            }
+
+    if (reg_init)
+        for (int i = 0; i < n; i++)
+            p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+
+    for (int i = 0; i < n; i++)
+        lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
+
+    // --- Write matrix and vector (merged WriteProblem) ---
+    std::ofstream matrix_stream(matrix_file, std::ios::binary);
+    if (!matrix_stream)
+    {
+        std::cerr << "ERROR: Failed to open matrix file for writing: " << matrix_file << std::endl;
+        return;
+    }
+    matrix_stream.write(reinterpret_cast<const char *>(lin_matrix.data()),
+                        lin_matrix.size() * sizeof(double));
+    matrix_stream.close();
+    std::cout << "Successfully wrote " << lin_matrix.size() * sizeof(double)
+              << " bytes to matrix file: " << matrix_file << std::endl;
+
+    std::ofstream vector_stream(vector_file, std::ios::binary);
+    if (!vector_stream)
+    {
+        std::cerr << "ERROR: Failed to open vector file for writing: " << vector_file << std::endl;
+        return;
+    }
+    vector_stream.write(reinterpret_cast<const char *>(lin_vector.data()),
+                        lin_vector.size() * sizeof(double));
+    vector_stream.close();
+    std::cout << "Successfully wrote " << lin_vector.size() * sizeof(double)
+              << " bytes to vector file: " << vector_file << std::endl;
+
+    std::cout << "Sum of Squared Ground Truths (yTWy): "
+              << std::fixed << std::setprecision(15) << lin_scalar << std::endl;
+#endif
+}
+
 double MTPR_trainer::FindLoss(std::vector<Configuration> &training_set)
 {
     bfgs_f = 0;
-    ObjectiveFunction(training_set);
+    ObjectiveFunction(training_set, false);
 #ifdef MLIP_MPI
     MPI_Barrier(mpi.comm);
     MPI_Reduce(&loss_, &bfgs_f, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);

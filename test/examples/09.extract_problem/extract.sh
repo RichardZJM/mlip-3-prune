@@ -5,9 +5,6 @@ MLP_EXE=../../../bin/mlp
 OUT_DIR=./out
 mkdir -p "$OUT_DIR"
 
-# Both commands will warn that the file will be overwritten. 
-# That warning is vestigial — these commands do not overwrite potentials.
-
 # This command extracts the necessary inputs to run the evolutionary algorithm.
 # Specifically, it produces the XTWX matrix (binary file), XTWy vector (binary file),
 # yTWy (scalar), and the average number of neighbours (scalar).
@@ -19,7 +16,7 @@ mkdir -p "$OUT_DIR"
 
 # Calculate loss. This is a convenience function that exposes the objective function 
 # to facilitate comparisons between potentials.
-# extract_problem takes the same options as the mlp train command. 
+# calculate_loss takes the same options as the mlp train command. 
 # This is only relevant if the options affect the loss, 
 # such as using different weights for energies and forces.
 

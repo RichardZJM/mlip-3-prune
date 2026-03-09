@@ -2345,7 +2345,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
     END_COMMAND;
 
     BEGIN_COMMAND("extract_problem",
-                  "Extracts the minimization matrix XTWX and vector XTWy. Accepts the same options as train.",
+                  "Extracts the XTWX matrix and XTWy vector, and writes them as binary files. Prints yTWy and the average number of neighbors. Accepts the same options as train.",
                   "mlp extract_problem potential.mtp train.cfg XTWX.bin XTWy.bin [options]:\n")
     {
         if (args.size() != 4)
@@ -2369,72 +2369,6 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         SetTagLogStream("dev", &std::cout);
         MLMTPR mtp(args[0]);
 
-        bool has_selection = false;
-        double sel_ene_wgt = 0.0;
-        double sel_frc_wgt = 0.0;
-        double sel_str_wgt = 0.0;
-        double sel_nbh_wgt = 0.0;
-        int sel_wgt_scl = 2;
-
-        {
-            ifstream ifs(args[0], ios::binary);
-            ifs.ignore(HUGE_INT, '#');
-            if (ifs.fail() || ifs.eof())
-            {
-                Message("Selection data was not found in MTP and will be set");
-                if (settings["al_mode"] == "nbh")
-                {
-                    Message("Selection by neighborhoods is set");
-                    sel_nbh_wgt = 1.0;
-                }
-                else if (settings["al_mode"] == "cfg")
-                {
-                    Message("Selection by configurations is set");
-                    sel_ene_wgt = 1.0;
-                }
-                else
-                {
-                    ERROR("Invalid al_mode");
-                }
-            }
-            else
-            {
-                Message("Selection data found");
-
-                has_selection = true;
-
-                string tmpstr;
-                ifs >> tmpstr;
-                if (tmpstr != "MVS_v1.1")
-                    ERROR("Invalid MVS-file format");
-
-                ifs >> tmpstr;
-                if (tmpstr != "energy_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_ene_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "force_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_frc_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "stress_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_str_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "site_en_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_nbh_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "weight_scaling")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_wgt_scl;
-            }
-        }
-
 #ifdef MLIP_MPI
         vector<Configuration> training_set = MPI_LoadCfgs(args[1]);
 #else
@@ -2442,7 +2376,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 #endif
 
         // training
-        MTPR_trainer mtptr(&mtp, settings);
+        MTPR_trainer mtptr(&mtp, settings, false);
         mtptr.ExtractProblem(training_set, args[2], args[3]);
 
         int sum_neighs = 0;
@@ -2463,39 +2397,6 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 #endif
         double ave_neighs = static_cast<double>(glob_neighs) / glob_atoms;
         Message("Average number of neighbors = " + std::to_string(ave_neighs));
-
-        // // training errrors calculation
-        // Settings erm_settings;
-        // erm_settings["reprt_to"] = settings["log"];
-        // ErrorMonitor errmon(erm_settings);
-        // for (Configuration &cfg : training_set)
-        // {
-        //     Configuration cfg_check(cfg);
-        //     mtp.CalcEFS(cfg_check);
-        //     errmon.AddToCompare(cfg, cfg_check);
-        // }
-        // errmon.GetReport();
-
-        // {
-        //     Settings select_setup;
-        //     CfgSelection select(&mtp, select_setup);
-        //     //            if (has_selection)
-        //     {
-        //         select.MV_ene_cmpnts_weight = sel_ene_wgt;
-        //         select.MV_frc_cmpnts_weight = sel_frc_wgt;
-        //         select.MV_str_cmpnts_weight = sel_str_wgt;
-        //         select.MV_nbh_cmpnts_weight = sel_nbh_wgt;
-        //         select.wgt_scale_power = sel_wgt_scl;
-        //     }
-
-        //     for (auto &cfg : training_set)
-        //         select.AddForSelection(cfg);
-
-        //     select.Select();
-
-        //     select.Save(settings["save_to"]);
-        // }
-
         Message("Extraction Complete!");
     }
     END_COMMAND;
@@ -2525,83 +2426,16 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         SetTagLogStream("dev", &std::cout);
         MLMTPR mtp(args[0]);
 
-        bool has_selection = false;
-        double sel_ene_wgt = 0.0;
-        double sel_frc_wgt = 0.0;
-        double sel_str_wgt = 0.0;
-        double sel_nbh_wgt = 0.0;
-        int sel_wgt_scl = 2;
-
-        {
-            ifstream ifs(args[0], ios::binary);
-            ifs.ignore(HUGE_INT, '#');
-            if (ifs.fail() || ifs.eof())
-            {
-                Message("Selection data was not found in MTP and will be set");
-                if (settings["al_mode"] == "nbh")
-                {
-                    Message("Selection by neighborhoods is set");
-                    sel_nbh_wgt = 1.0;
-                }
-                else if (settings["al_mode"] == "cfg")
-                {
-                    Message("Selection by configurations is set");
-                    sel_ene_wgt = 1.0;
-                }
-                else
-                {
-                    ERROR("Invalid al_mode");
-                }
-            }
-            else
-            {
-                Message("Selection data found");
-
-                has_selection = true;
-
-                string tmpstr;
-                ifs >> tmpstr;
-                if (tmpstr != "MVS_v1.1")
-                    ERROR("Invalid MVS-file format");
-
-                ifs >> tmpstr;
-                if (tmpstr != "energy_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_ene_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "force_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_frc_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "stress_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_str_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "site_en_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_nbh_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "weight_scaling")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_wgt_scl;
-            }
-        }
-
 #ifdef MLIP_MPI
         vector<Configuration> training_set = MPI_LoadCfgs(args[1]);
 #else
         vector<Configuration> training_set = LoadCfgs(args[1]);
 #endif
-
-        // training
-        MTPR_trainer mtptr(&mtp, settings);
+        MTPR_trainer mtptr(&mtp, settings, false);
         double loss = mtptr.FindLoss(training_set);
         Message("Training Loss: " + std::to_string(loss));
     }
     END_COMMAND;
+
     return is_command_found;
 }

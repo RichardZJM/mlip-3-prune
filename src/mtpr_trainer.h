@@ -49,11 +49,12 @@ public:
         MakeSetting(auto_minmax_magmom, "auto-minmax-magmom");
     };
 
-    MTPR_trainer(MLMTPR *_p_mlmtpr, Settings settings) : NonLinearRegression(_p_mlmtpr, settings), p_mlmtpr(_p_mlmtpr) // Initialization of the settings
+    MTPR_trainer(MLMTPR *_p_mlmtpr, Settings settings, const bool verbose = true) : NonLinearRegression(_p_mlmtpr, settings, verbose), p_mlmtpr(_p_mlmtpr) // Initialization of the settings
     {
         InitSettings();
         ApplySettings(settings);
-        PrintSettings();
+        if (verbose)
+            PrintSettings();
 
         int n = p_mlmtpr->alpha_count + p_mlmtpr->species_count - 1; // Matrix size
         for (int i = 0; i < n; i++)
@@ -66,14 +67,12 @@ public:
     void SolveSLAE(int TS_size);                           // Find the corresponding linear coefficients
     void AddToSLAE(Configuration &cfg, double weight = 1); // Adds configuration to regression SLAE. If weight = -1 removes from regression
 
-    void AddSpecies(std::vector<Configuration> &training_set);                   // Extend the species in the MTPR potential if needed
-    void LinOptimize(std::vector<Configuration> &training_set);                  // Solve the linear SLAE to find the linear coefficients
-    void Train(std::vector<Configuration> &training_set) override;               //"Main" training function
-    void Rescale(std::vector<Configuration> &training_set);                      // Find the optimal scaling parameter
-    void NonLinOptimize(std::vector<Configuration> &training_set, int max_iter); // launch the nonlinear optimization procedure, with Shapeev BFGS
-    void ExtractProblem(std::vector<Configuration> &training_set, std::string &matrix_file, std::string &vector_file);
-    void WriteProblem(std::string &matrix_file, std::string &vector_file);
-
-    double FindLoss(std::vector<Configuration> &training_set);
+    void AddSpecies(std::vector<Configuration> &training_set);                                                                     // Extend the species in the MTPR potential if needed
+    void LinOptimize(std::vector<Configuration> &training_set);                                                                    // Solve the linear SLAE to find the linear coefficients
+    void Train(std::vector<Configuration> &training_set) override;                                                                 //"Main" training function
+    void Rescale(std::vector<Configuration> &training_set);                                                                        // Find the optimal scaling parameter
+    void NonLinOptimize(std::vector<Configuration> &training_set, int max_iter);                                                   // launch the nonlinear optimization procedure, with Shapeev BFGS
+    double FindLoss(std::vector<Configuration> &training_set);                                                                     // Print the loss to the user
+    void ExtractProblem(std::vector<Configuration> &training_set, const std::string &matrix_file, const std::string &vector_file); // Extract matrix problem for pruning
 };
 #endif // MLIP_MTPR_TRAINER_H
