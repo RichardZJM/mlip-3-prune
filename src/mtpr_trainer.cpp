@@ -8,7 +8,6 @@
 #include <sstream>
 #include <algorithm>
 #include <cstring>
-#include <Eigen/Dense>
 
 using namespace std;
 
@@ -875,25 +874,16 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
                                   const std::string &matrix_file,
                                   const std::string &vector_file)
 {
-    ClearSLAE();
-
+    const int N = p_mlmtpr->CoeffCount();
     double local_lin_scalar = 0.0;
 
-    const int N_params = p_mlmtpr->CoeffCount();
-    const int n_lin = p_mlmtpr->LinSize();
-    const int n_nl = p_mlmtpr->Rsize();
+    std::vector<double> H(N * N, 0.0);
+    std::vector<double> g(N, 0.0);
 
-    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(N_params, N_params);
-    Eigen::VectorXd g = Eigen::VectorXd::Zero(N_params);
+    std::vector<double> J_E(N);
+    std::vector<double> J_F;
+    std::vector<double> J_S;
 
-    // Memory optimization: Allocate Jacobians once and reuse them.
-    Eigen::VectorXd J_E;
-    Eigen::MatrixXd J_F;
-    Eigen::MatrixXd J_S;
-
-    // -----------------------------------------------------------------------
-    // Phase 1: Build H and g
-    // -----------------------------------------------------------------------
     for (auto &cfg : training_set)
     {
         if (cfg.nbh_cutoff != p_mlmtpr->p_RadialBasis->max_val)
@@ -903,11 +893,9 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
             continue;
 
         const int cfg_size = cfg.size();
-
-        // Zero-out matrices for current config
-        J_E.setZero(N_params);
-        J_F.setZero(3 * cfg_size, N_params);
-        J_S.setZero(9, N_params);
+        std::fill(J_E.begin(), J_E.end(), 0.0);
+        J_F.assign(3 * cfg_size * N, 0.0);
+        J_S.assign(9 * N, 0.0);
 
         for (int ind = 0; ind < (int)cfg.nbhs.size(); ind++)
         {
@@ -915,11 +903,10 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
 
             std::vector<double> grad_E_nbh;
             p_mlmtpr->AccumulateCombinationGrad(nbh, grad_E_nbh, 1.0, nullptr);
-            for (int p = 0; p < N_params; ++p)
-                J_E(p) += grad_E_nbh[p];
+            for (int p = 0; p < N; ++p)
+                J_E[p] += grad_E_nbh[p];
 
-            if ((wgt_eqtn_forces > 0 && cfg.has_forces()) ||
-                (wgt_eqtn_stress > 0 && cfg.has_stresses()))
+            if ((wgt_eqtn_forces > 0 && cfg.has_forces()) || (wgt_eqtn_stress > 0 && cfg.has_stresses()))
             {
                 std::vector<Vector3> se_ders_weights(nbh.count, Vector3(0, 0, 0));
                 for (int j = 0; j < nbh.count; ++j)
@@ -927,111 +914,100 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
                     for (int a = 0; a < 3; ++a)
                     {
                         se_ders_weights[j][a] = 1.0;
-
                         std::vector<double> grad_V_rja;
                         p_mlmtpr->AccumulateCombinationGrad(nbh, grad_V_rja, 0.0, se_ders_weights.data());
 
                         int central_idx = nbh.my_ind;
                         int neigh_idx = nbh.inds[j];
 
-                        for (int p = 0; p < N_params; ++p)
+                        for (int p = 0; p < N; ++p)
                         {
                             double val = grad_V_rja[p];
                             if (wgt_eqtn_forces > 0 && cfg.has_forces())
                             {
-                                J_F(3 * central_idx + a, p) += val;
+                                J_F[(3 * central_idx + a) * N + p] += val;
                                 if (neigh_idx >= 0 && neigh_idx < cfg_size)
-                                    J_F(3 * neigh_idx + a, p) -= val;
+                                    J_F[(3 * neigh_idx + a) * N + p] -= val;
                             }
                             if (wgt_eqtn_stress > 0 && cfg.has_stresses())
                             {
                                 for (int b = 0; b < 3; ++b)
-                                    J_S(a * 3 + b, p) -= val * nbh.vecs[j][b];
+                                    J_S[(a * 3 + b) * N + p] -= val * nbh.vecs[j][b];
                             }
                         }
-                        se_ders_weights[j][a] = 0.0; // Reset for next iteration
+                        se_ders_weights[j][a] = 0.0;
                     }
                 }
             }
         }
 
-        int fn = norm_by_forces;
-        double d = 0.1;
         double avef = 0.0;
-
         if (cfg.has_forces())
         {
             for (int i = 0; i < cfg_size; i++)
                 avef += cfg.force(i).NormSq();
             avef /= cfg_size;
         }
+        const double common_w = 0.1 / (0.1 + (double)norm_by_forces * avef);
 
-        const double common_weight = d / (d + fn * avef);
-
-        // --- Accumulate Energy ---
         if (cfg.has_energy())
         {
-            double W_E = common_weight * wgt_energy(cfg);
-            if (W_E > 0.0)
-            {
-                H.noalias() += W_E * J_E * J_E.transpose();
-                g.noalias() += W_E * cfg.energy * J_E;
-                local_lin_scalar += W_E * cfg.energy * cfg.energy;
-            }
+            double W = common_w * wgt_energy(cfg);
+            for (int i = 0; i < N; ++i)
+                for (int j = 0; j < N; ++j)
+                    H[i * N + j] += W * J_E[i] * J_E[j];
+            for (int i = 0; i < N; ++i)
+                g[i] += W * cfg.energy * J_E[i];
+            local_lin_scalar += W * cfg.energy * cfg.energy;
         }
 
-        // --- Accumulate Forces ---
         if (wgt_eqtn_forces > 0 && cfg.has_forces())
         {
             for (int i = 0; i < cfg_size; i++)
             {
                 for (int a = 0; a < 3; a++)
                 {
-                    double W_F = common_weight * wgt_forces(cfg, i, a);
-                    if (W_F > 0.0)
-                    {
-                        auto row = J_F.row(3 * i + a);
-                        double val = cfg.force(i, a);
-                        H.noalias() += W_F * row.transpose() * row;
-                        g.noalias() += W_F * val * row.transpose(); // Note the .transpose() here
-                        local_lin_scalar += W_F * val * val;
-                    }
+                    double val = cfg.force(i, a);
+                    double W = common_w * wgt_forces(cfg, i, a);
+                    double *row = &J_F[(3 * i + a) * N];
+                    for (int p = 0; p < N; ++p)
+                        for (int q = 0; q < N; ++q)
+                            H[p * N + q] += W * row[p] * row[q];
+                    for (int p = 0; p < N; ++p)
+                        g[p] += W * val * row[p];
+                    local_lin_scalar += W * val * val;
                 }
             }
         }
 
-        // --- Accumulate Stresses ---
         if (wgt_eqtn_stress > 0 && cfg.has_stresses())
         {
             for (int a = 0; a < 3; a++)
             {
                 for (int b = 0; b < 3; b++)
                 {
-                    double W_S = wgt_stress(cfg, a, b);
-                    if (W_S > 0.0)
-                    {
-                        auto row = J_S.row(a * 3 + b);
-                        double val = cfg.stresses[a][b];
-                        H.noalias() += W_S * row.transpose() * row;
-                        g.noalias() += W_S * val * row.transpose(); // Note the .transpose() here
-                        local_lin_scalar += W_S * val * val;
-                    }
+                    double val = cfg.stresses[a][b];
+                    double W = wgt_stress(cfg, a, b);
+                    double *row = &J_S[(a * 3 + b) * N];
+                    for (int p = 0; p < N; ++p)
+                        for (int q = 0; q < N; ++q)
+                            H[p * N + q] += W * row[p] * row[q];
+                    for (int p = 0; p < N; ++p)
+                        g[p] += W * val * row[p];
+                    local_lin_scalar += W * val * val;
                 }
             }
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Phase 2: MPI reduction
-    // -----------------------------------------------------------------------
     double global_lin_scalar = local_lin_scalar;
-    Eigen::MatrixXd H_global = Eigen::MatrixXd::Zero(N_params, N_params);
-    Eigen::VectorXd g_global = Eigen::VectorXd::Zero(N_params);
+    std::vector<double> H_global(N * N, 0.0);
+    std::vector<double> g_global(N, 0.0);
 
 #ifdef MLIP_MPI
     MPI_Reduce(&local_lin_scalar, &global_lin_scalar, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-    MPI_Reduce(H.data(), H_global.data(), N_params * N_params, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
-    MPI_Reduce(g.data(), g_global.data(), N_params, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    MPI_Reduce(H.data(), H_global.data(), N * N, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    MPI_Reduce(g.data(), g_global.data(), N, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
     bool is_root = (mpi.rank == 0);
 #else
     H_global = std::move(H);
@@ -1041,61 +1017,18 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
 
     if (is_root)
     {
-        // -------------------------------------------------------------------
-        // Phase 3: Schur complement & Internal Solve
-        // -------------------------------------------------------------------
-        Eigen::MatrixXd H_NLNL = H_global.block(0, 0, n_nl, n_nl);
-        Eigen::MatrixXd H_NLL = H_global.block(0, n_nl, n_nl, n_lin);
-        Eigen::MatrixXd H_LL = H_global.block(n_nl, n_nl, n_lin, n_lin);
-        Eigen::VectorXd g_NL = g_global.segment(0, n_nl);
-        Eigen::VectorXd g_L = g_global.segment(n_nl, n_lin);
-
-        Eigen::LDLT<Eigen::MatrixXd> ldlt_NLNL(H_NLNL);
-        if (ldlt_NLNL.info() != Eigen::Success)
-            std::cerr << "WARNING: H_NLNL decomposition failed. Matrix may be singular." << std::endl;
-
-        Eigen::MatrixXd C = ldlt_NLNL.solve(H_NLL);
-        Eigen::VectorXd dv = ldlt_NLNL.solve(g_NL);
-
-        Eigen::MatrixXd S_LL = H_LL - H_NLL.transpose() * C;
-        Eigen::VectorXd g_S = g_L - H_NLL.transpose() * dv;
-
-        // Unregularized internal solve
-        Eigen::LDLT<Eigen::MatrixXd> ldlt_SLL(S_LL);
-        if (ldlt_SLL.info() != Eigen::Success)
-            std::cerr << "WARNING: S_LL decomposition failed. (Consider Ridge Reg in Python)" << std::endl;
-
-        Eigen::VectorXd x_L = ldlt_SLL.solve(g_S);
-        Eigen::VectorXd x_NL = ldlt_NLNL.solve(g_NL - H_NLL * x_L);
-
-        // Update Non-Linear coefficients internally
-        double *coeffs = p_mlmtpr->Coeff();
-        for (int i = 0; i < n_nl; i++)
-            coeffs[i] = x_NL(i);
-
-        // -------------------------------------------------------------------
-        // Phase 4: File Output for Python
-        // -------------------------------------------------------------------
-        lin_scalar = global_lin_scalar;
-
-        // Exporting raw un-projected H_LL and g_L to Python
-        lin_matrix.assign(H_LL.data(), H_LL.data() + n_lin * n_lin);
-        lin_vector.assign(g_L.data(), g_L.data() + n_lin);
-
-        auto write_binary = [](const std::string &path, const std::vector<double> &data)
+        auto write_bin = [](const std::string &p, const std::vector<double> &d)
         {
-            std::ofstream os(path, std::ios::binary);
-            if (!os)
-                return false;
-            os.write(reinterpret_cast<const char *>(data.data()), data.size() * sizeof(double));
-            return true;
+            std::ofstream os(p, std::ios::binary);
+            if (os)
+                os.write(reinterpret_cast<const char *>(d.data()), d.size() * sizeof(double));
+            return (bool)os;
         };
 
-        if (write_binary(matrix_file, lin_matrix))
-            std::cout << "Wrote matrix: " << matrix_file << std::endl;
-        if (write_binary(vector_file, lin_vector))
-            std::cout << "Wrote vector: " << vector_file << std::endl;
-
+        if (write_bin(matrix_file, H_global))
+            std::cout << "Wrote: " << matrix_file << std::endl;
+        if (write_bin(vector_file, g_global))
+            std::cout << "Wrote: " << vector_file << std::endl;
         std::cout << "yTWy: " << std::fixed << std::setprecision(15) << global_lin_scalar << std::endl;
     }
 }
