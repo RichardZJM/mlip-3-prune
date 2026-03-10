@@ -877,13 +877,7 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
 {
     ClearSLAE();
 
-    int m = static_cast<int>(training_set.size());
-    int K = m;
     double local_lin_scalar = 0.0;
-
-#ifdef MLIP_MPI
-    MPI_Allreduce(&m, &K, 1, MPI_INT, MPI_SUM, mpi.comm);
-#endif
 
     const int N_params = p_mlmtpr->CoeffCount();
     const int n_lin = p_mlmtpr->LinSize();
@@ -891,6 +885,11 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
 
     Eigen::MatrixXd H = Eigen::MatrixXd::Zero(N_params, N_params);
     Eigen::VectorXd g = Eigen::VectorXd::Zero(N_params);
+
+    // Memory optimization: Allocate Jacobians once and reuse them.
+    Eigen::VectorXd J_E;
+    Eigen::MatrixXd J_F;
+    Eigen::MatrixXd J_S;
 
     // -----------------------------------------------------------------------
     // Phase 1: Build H and g
@@ -905,9 +904,10 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
 
         const int cfg_size = cfg.size();
 
-        Eigen::VectorXd J_E = Eigen::VectorXd::Zero(N_params);
-        Eigen::MatrixXd J_F = Eigen::MatrixXd::Zero(3 * cfg_size, N_params);
-        Eigen::MatrixXd J_S = Eigen::MatrixXd::Zero(9, N_params);
+        // Zero-out matrices for current config
+        J_E.setZero(N_params);
+        J_F.setZero(3 * cfg_size, N_params);
+        J_S.setZero(9, N_params);
 
         for (int ind = 0; ind < (int)cfg.nbhs.size(); ind++)
         {
@@ -921,11 +921,11 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
             if ((wgt_eqtn_forces > 0 && cfg.has_forces()) ||
                 (wgt_eqtn_stress > 0 && cfg.has_stresses()))
             {
+                std::vector<Vector3> se_ders_weights(nbh.count, Vector3(0, 0, 0));
                 for (int j = 0; j < nbh.count; ++j)
                 {
                     for (int a = 0; a < 3; ++a)
                     {
-                        std::vector<Vector3> se_ders_weights(nbh.count, Vector3(0, 0, 0));
                         se_ders_weights[j][a] = 1.0;
 
                         std::vector<double> grad_V_rja;
@@ -949,22 +949,26 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
                                     J_S(a * 3 + b, p) -= val * nbh.vecs[j][b];
                             }
                         }
+                        se_ders_weights[j][a] = 0.0; // Reset for next iteration
                     }
                 }
             }
         }
 
-        double weight = 1.0;
         int fn = norm_by_forces;
         double d = 0.1;
         double avef = 0.0;
 
         if (cfg.has_forces())
+        {
             for (int i = 0; i < cfg_size; i++)
-                avef += cfg.force(i).NormSq() / cfg_size;
+                avef += cfg.force(i).NormSq();
+            avef /= cfg_size;
+        }
 
-        const double common_weight = weight * d / (d + fn * avef);
+        const double common_weight = d / (d + fn * avef);
 
+        // --- Accumulate Energy ---
         if (cfg.has_energy())
         {
             double W_E = common_weight * wgt_energy(cfg);
@@ -976,6 +980,7 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
             }
         }
 
+        // --- Accumulate Forces ---
         if (wgt_eqtn_forces > 0 && cfg.has_forces())
         {
             for (int i = 0; i < cfg_size; i++)
@@ -988,26 +993,27 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
                         auto row = J_F.row(3 * i + a);
                         double val = cfg.force(i, a);
                         H.noalias() += W_F * row.transpose() * row;
-                        g.noalias() += W_F * val * row;
+                        g.noalias() += W_F * val * row.transpose(); // Note the .transpose() here
                         local_lin_scalar += W_F * val * val;
                     }
                 }
             }
         }
 
+        // --- Accumulate Stresses ---
         if (wgt_eqtn_stress > 0 && cfg.has_stresses())
         {
             for (int a = 0; a < 3; a++)
             {
                 for (int b = 0; b < 3; b++)
                 {
-                    double W_S = weight * wgt_stress(cfg, a, b);
+                    double W_S = wgt_stress(cfg, a, b);
                     if (W_S > 0.0)
                     {
                         auto row = J_S.row(a * 3 + b);
                         double val = cfg.stresses[a][b];
                         H.noalias() += W_S * row.transpose() * row;
-                        g.noalias() += W_S * val * row;
+                        g.noalias() += W_S * val * row.transpose(); // Note the .transpose() here
                         local_lin_scalar += W_S * val * val;
                     }
                 }
@@ -1026,22 +1032,17 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
     MPI_Reduce(&local_lin_scalar, &global_lin_scalar, 1, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
     MPI_Reduce(H.data(), H_global.data(), N_params * N_params, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
     MPI_Reduce(g.data(), g_global.data(), N_params, MPI_DOUBLE, MPI_SUM, 0, mpi.comm);
+    bool is_root = (mpi.rank == 0);
 #else
     H_global = std::move(H);
     g_global = std::move(g);
-#endif
-
     bool is_root = true;
-#ifdef MLIP_MPI
-    is_root = (mpi.rank == 0);
 #endif
 
     if (is_root)
     {
         // -------------------------------------------------------------------
-        // Phase 3: Schur complement
-        // H = [ H_NLNL   H_NLL ]
-        //     [ H_NLL^T  H_LL  ]
+        // Phase 3: Schur complement & Internal Solve
         // -------------------------------------------------------------------
         Eigen::MatrixXd H_NLNL = H_global.block(0, 0, n_nl, n_nl);
         Eigen::MatrixXd H_NLL = H_global.block(0, n_nl, n_nl, n_lin);
@@ -1056,64 +1057,28 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
         Eigen::MatrixXd C = ldlt_NLNL.solve(H_NLL);
         Eigen::VectorXd dv = ldlt_NLNL.solve(g_NL);
 
-        // Schur complement for linear block (used internally for solving)
         Eigen::MatrixXd S_LL = H_LL - H_NLL.transpose() * C;
         Eigen::VectorXd g_S = g_L - H_NLL.transpose() * dv;
 
-        // -------------------------------------------------------------------
-        // Regularization (applied to S_LL for internal solve only)
-        // -------------------------------------------------------------------
-        int TS_size = K;
-        auto get_diag = [&](int i)
-        { return S_LL(i, i); };
-
-        if (!reg_init)
-        {
-            for (int i = 0; i < n_lin; i++)
-            {
-                double diag = std::max(1.0, get_diag(i));
-                if (p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * diag / TS_size ||
-                    p_mlmtpr->reg_vector[i] > 1e2 * reg_param * diag / TS_size)
-                {
-                    reg_init = true;
-                    break;
-                }
-            }
-        }
-
-        if (reg_init)
-            for (int i = 0; i < n_lin; i++)
-                p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, get_diag(i)) / TS_size;
-
-        for (int i = 0; i < n_lin; i++)
-            S_LL(i, i) += p_mlmtpr->reg_vector[i] * TS_size;
-
-        // -------------------------------------------------------------------
-        // Solve for linear coefficients
-        // -------------------------------------------------------------------
+        // Unregularized internal solve
         Eigen::LDLT<Eigen::MatrixXd> ldlt_SLL(S_LL);
         if (ldlt_SLL.info() != Eigen::Success)
-            std::cerr << "WARNING: S_LL decomposition failed." << std::endl;
+            std::cerr << "WARNING: S_LL decomposition failed. (Consider Ridge Reg in Python)" << std::endl;
 
         Eigen::VectorXd x_L = ldlt_SLL.solve(g_S);
-
-        // -------------------------------------------------------------------
-        // Back-substitute to recover non-linear update
-        // x_NL = H_NLNL^{-1} * (g_NL - H_NLL * x_L)
-        // -------------------------------------------------------------------
         Eigen::VectorXd x_NL = ldlt_NLNL.solve(g_NL - H_NLL * x_L);
 
-        // Update non-linear coefficients directly in the model
+        // Update Non-Linear coefficients internally
         double *coeffs = p_mlmtpr->Coeff();
         for (int i = 0; i < n_nl; i++)
             coeffs[i] = x_NL(i);
 
         // -------------------------------------------------------------------
-        // File output: use global (undeflated) H_LL and g_L so that Python
-        // SSE = global_lin_scalar - theta @ g_L  is directly comparable with
-        // the frozen-nonlinear baseline and across different runs.
+        // Phase 4: File Output for Python
         // -------------------------------------------------------------------
         lin_scalar = global_lin_scalar;
+
+        // Exporting raw un-projected H_LL and g_L to Python
         lin_matrix.assign(H_LL.data(), H_LL.data() + n_lin * n_lin);
         lin_vector.assign(g_L.data(), g_L.data() + n_lin);
 
@@ -1131,8 +1096,7 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
         if (write_binary(vector_file, lin_vector))
             std::cout << "Wrote vector: " << vector_file << std::endl;
 
-        std::cout << "yTWy: "
-                  << std::fixed << std::setprecision(15) << global_lin_scalar << std::endl;
+        std::cout << "yTWy: " << std::fixed << std::setprecision(15) << global_lin_scalar << std::endl;
     }
 }
 
