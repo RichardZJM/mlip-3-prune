@@ -6,12 +6,11 @@
 MKFILE=make/config.mk
 
 # Defaults
-# prefix=/usr/local
 prefix=.
 debug=
 mpi=0
 compiler=gnu
-blas=embedded
+blas=
 blasroot=
 public=
 selftest=1
@@ -38,23 +37,33 @@ Options:
   --heavytests                 include heavy shell tests
   --enable-debug               include debug symbols [no]
   --compiler=[intel|gnu]       which compilers to use [autodetect]
-  --blas=NAME                  BLAS library [autodetect]
-BLAS option names:
-  mkl                          Intel MKL library
-  openblas                     OpenBLAS library
-  embedded                     Embedded BLAS 
+  --blas=[mkl|openblas]        BLAS/LAPACK library [autodetect]
+  --blas-root=<path>           Path to OpenBLAS (if not in standard path)
 EndUsage
   exit 1
 }
 
-# autodetect mpi support
-test $(Check mpicc) && mpi=1
-# autodetect compiler and blas library ( intel and mkl only )
-test $(Check icc) && compiler="intel"
-[[ "${compiler}" = "intel" ]] && test ${MKLROOT} && blas=mkl
+echo "Starting autodetection..."
 
-#[[ "`make has-feature WHAT=second-expansion`" != "second-expansion" ]] \
-#    && { echo -e "Your make does not support second-expansion. This is unexpected. Please contact the developers."; exit 1; }
+# autodetect mpi support
+if Check mpicc; then
+    mpi=1
+    echo "  -- MPI: Found mpicc. MPI support enabled."
+else
+    echo "  -- MPI: mpicc not found. MPI support disabled."
+fi
+
+# autodetect compiler and blas/lapack library
+if [ -n "${MKLROOT}" ]; then
+    compiler="intel"
+    blas=mkl
+    echo "  -- BLAS/LAPACK: Intel MKL detected via MKLROOT (${MKLROOT})"
+elif [ -f /usr/include/openblas/cblas.h ] || [ -f /usr/local/include/openblas/cblas.h ] || [ -f /usr/include/x86_64-linux-gnu/openblas/cblas.h ]; then
+    blas=openblas
+    echo "  -- BLAS/LAPACK: OpenBLAS detected in system paths."
+else
+    echo "  -- BLAS/LAPACK: No high-performance library detected automatically."
+fi
 
 # LP64 or non-LP64 for the Intel MKL
 arch=$(arch)
@@ -90,6 +99,23 @@ for arg in "$@"; do
     esac
 done
 
+# Force requirement check
+if [[ "${blas}" != "mkl" && "${blas}" != "openblas" ]]; then
+    Halt "High-performance BLAS/LAPACK is REQUIRED for performance (dposv/dgesv support).\nAutodetection failed and no valid library was specified.\nPlease install OpenBLAS or Intel MKL."
+fi
+
+# Verbosity: Summary of important user/detected inputs
+echo ""
+echo "Configuration Summary:"
+echo "  Compiler:    ${compiler}"
+echo "  MPI:         $( [ $mpi -eq 1 ] && echo "Enabled" || echo "Disabled" )"
+echo "  Math Lib:    ${blas} (provides BLAS + LAPACK)"
+if [ "${blas}" == "openblas" ] && [ -n "${blasroot}" ]; then
+    echo "  Lib Path:    ${blasroot}"
+fi
+echo "  Optimizations: -O3 -march=native"
+echo ""
+
 echo 'Generating makefile configuration ...'
 
 cat > ${MKFILE} <<MKEOF
@@ -109,21 +135,19 @@ case "${compiler}" in
         echo "" >> ${MKFILE}
         echo "# MPI Compilers" >> ${MKFILE}
         if [ $mpi = 1 ]; then
-            echo "CC_MPI  = mpiicc #for C" >> ${MKFILE}
-            echo "CXX_MPI = mpiicpc #for C++" >> ${MKFILE}
-            echo "FC_MPI  = mpiifort #for fortran" >> ${MKFILE}
+            echo "CC_MPI  = mpiicc" >> ${MKFILE}
+            echo "CXX_MPI = mpiicpc" >> ${MKFILE}
+            echo "FC_MPI  = mpiifort" >> ${MKFILE}
         fi
         echo "" >> ${MKFILE}
         echo "# Serial Compilers" >> ${MKFILE}
-        echo "CC  = icc #for C" >> ${MKFILE}
-        echo "CXX = icpc #for C++" >> ${MKFILE}
-        echo "FC  = ifort #for fortran" >> ${MKFILE}
+        echo "CC  = icc" >> ${MKFILE}
+        echo "CXX = icpc" >> ${MKFILE}
+        echo "FC  = ifort" >> ${MKFILE}
         if [ $mpi = 1 ]; then
-            CC="mpiicc"
-            CXX="mpiicpc"
+            CC="mpiicc"; CXX="mpiicpc"
         else
-            CC="icc"
-            CXX="icpc"
+            CC="icc"; CXX="icpc"
         fi
         ;;
     gnu )
@@ -132,57 +156,43 @@ case "${compiler}" in
         if [ $mpi = 1 ]; then
             fc=mpif90;
             test $(Check mpifc) && fc=mpifc
-            echo "CC_MPI  = mpicc  #for C" >> ${MKFILE}
-            echo "CXX_MPI = mpicxx  #for C++" >> ${MKFILE}
-            echo "FC_MPI  = ${fc}  #for fortran" >> ${MKFILE}
+            echo "CC_MPI  = mpicc" >> ${MKFILE}
+            echo "CXX_MPI = mpicxx" >> ${MKFILE}
+            echo "FC_MPI  = ${fc}" >> ${MKFILE}
         fi
         echo "" >> ${MKFILE}
         echo "# Serial Compilers" >> ${MKFILE}
-        echo "CC  = gcc  #for C" >> ${MKFILE}
-        echo "CXX = g++  #for C++" >> ${MKFILE}
-        echo "FC  = gfortran #for fortran" >> ${MKFILE}
+        echo "CC  = gcc" >> ${MKFILE}
+        echo "CXX = g++" >> ${MKFILE}
+        echo "FC  = gfortran" >> ${MKFILE}
         if [ $mpi = 1 ]; then
-            CC="mpicc"
-            CXX="mpicxx"
+            CC="mpicc"; CXX="mpicxx"
         else
-            CC="gcc"
-            CXX="g++"
+            CC="gcc"; CXX="g++"
         fi
         ;;
     * ) Halt "unknown compiler \"${compiler}\"." ;;
 esac
+
 echo "" >> ${MKFILE}
 echo "# Compile and link flags" >> ${MKFILE}
-echo "# CPPFLAGS are preprocessor flags" >> ${MKFILE}
-echo "# CXXFLAGS are c++ compiler flags" >> ${MKFILE}
-echo "# CCFLAGS are c compiler flags" >> ${MKFILE}
-echo "# FFLAGS are flags for fortran compiler" >> ${MKFILE}
-echo "# LDFLAGS are flags for linker" >> ${MKFILE}
 echo "CPPFLAGS += ${debugflag}" >> ${MKFILE}
-echo "CXXFLAGS += -O3 -std=c++11 -fPIC" >> ${MKFILE}
-echo "CCFLAGS += -O3 -fPIC" >> ${MKFILE}
-echo "FFLAGS += -O3 -fPIC ${debugflag}" >> ${MKFILE}
-if [ "${mpi}" == 1 ]; then
-	echo "# Flag for mpi preprocessor" >> ${MKFILE}
-	echo "CPPFLAGS_MPI += -DMLIP_MPI" >> ${MKFILE}
-fi
-echo "# Flag for compilation of developer version" >> ${MKFILE}
+# Forced march=native ensures the compiler uses the best vector instructions for LAPACK/BLAS
+echo "CXXFLAGS += -O3 -std=c++11 -fPIC -march=native" >> ${MKFILE}
+echo "CCFLAGS += -O3 -fPIC -march=native" >> ${MKFILE}
+echo "FFLAGS += -O3 -fPIC -march=native ${debugflag}" >> ${MKFILE}
 
 if [ "${mpi}" == 1 ]; then
-	echo "# Compile mpi version" >> ${MKFILE}
+	echo "CPPFLAGS_MPI += -DMLIP_MPI" >> ${MKFILE}
 	echo "USE_MPI = 1" >> ${MKFILE}
 else 
-	echo "# Compile mpi version" >> ${MKFILE}
 	echo "USE_MPI = 0" >> ${MKFILE}
 fi
+
 if [ "${selftest}" == 0 ]; then
-	echo "# No running of test suite" >> ${MKFILE}
-	cxxflag+=" -DMLIP_NO_SELFTEST"  >> ${MKFILE}
+	cxxflag+=" -DMLIP_NO_SELFTEST" 
 fi
-if [ "${heavytests}" == 1 ]; then
-        echo "# Run heavy shell tests" >> ${MKFILE}
-        echo "RUN_HEAVY_TESTS = 1" >> ${MKFILE}
-fi
+
 if [ -n "${cxxflag}" ]; then
   echo "CXXFLAGS +=${cxxflag}" >> ${MKFILE}
 fi
@@ -190,14 +200,12 @@ fi
 case "${compiler}" in
     intel )
         linklib="-lifcore"
-        pythonlibs="ifcore"
         ;;
     gnu )
-        #"FFLAGS += -fbounds-check"
         linklib="-lgfortran"
-        pythonlibs="gfortran" 
         ;;
 esac
+
 case "${blas}" in
     mkl ) 
         if [[ "${arch_lp64}" = 1 ]]; then
@@ -206,40 +214,24 @@ case "${blas}" in
             mkllib="ia32"
         fi
 	echo "" >> ${MKFILE}
-	echo "# Flags for compilation using MKL BLAS" >> ${MKFILE}
+	echo "# Flags for compilation using MKL (includes LAPACK)" >> ${MKFILE}
         echo "LDFLAGS += -L${MKLROOT}/lib/${mkllib} -lmkl_rt ${linklib}" >> ${MKFILE}
         echo "CPPFLAGS += -I${MKLROOT}/include" >> ${MKFILE}
         echo "CXXFLAGS += -DMLIP_INTEL_MKL " >> ${MKFILE}
-        pythonlibs+=" mkl_rt"
-        pythonlibdir="${MKLROOT}/lib/${mkllib}"
-        pythonincdir="${MKLROOT}/include"
         ;;
     openblas )
 	echo "" >> ${MKFILE}
-	echo "# Flags for compilation using OpenBLAS" >> ${MKFILE}
-        echo "LDFLAGS += -L${blasroot}/lib -l:libopenblas.a ${linklib}" >> ${MKFILE}
-        echo "CPPFLAGS += -I${blasroot}/include" >> ${MKFILE}
-        pythonlibs+=" :libopenblas.a"
-        pythonlibdir="${blasroot}/lib"
-        pythonincdir="${blasroot}/include"
-        ;;
-    embedded )
-	echo "" >> ${MKFILE}
-	echo "# Flags for compilation using embedded BLAS" >> ${MKFILE}
-	echo "# Dependence on mlip_cblas and ${linklib}"  >> ${MKFILE}
-        echo "LDFLAGS += \$(LIB_DIR)/lib_mlip_cblas.a ${linklib}" >> ${MKFILE}
-	echo "# Include path to cblas"  >> ${MKFILE}
-        echo "CPPFLAGS += -Iblas/cblas" >> ${MKFILE}
-	echo "# Dependence on mlip_cblas" >> ${MKFILE}
-        echo "PREREQ = \$(LIB_DIR)/lib_mlip_cblas.a" >> ${MKFILE}
-        pythonlibs+=" _mlip_cblas"
-        pythonlibdir=""
-        pythonincdir="blas/cblas"
+	echo "# Flags for compilation using OpenBLAS + LAPACK" >> ${MKFILE}
+        if [ -n "${blasroot}" ]; then
+            # Explicitly adding -llapack to ensure dposv etc. are found
+            echo "LDFLAGS += -L${blasroot}/lib -lopenblas -llapack ${linklib}" >> ${MKFILE}
+            echo "CPPFLAGS += -I${blasroot}/include" >> ${MKFILE}
+        else
+            echo "LDFLAGS += -lopenblas -llapack ${linklib}" >> ${MKFILE}
+        fi
         ;;
     * ) Halt "unknown BLAS library name \"${blas}\"." ;;
 esac
 
 echo "" >> ${MKFILE}
-## echo "# Extra variables" >> ${MKFILE}
-
 echo 'Configuration complete.'

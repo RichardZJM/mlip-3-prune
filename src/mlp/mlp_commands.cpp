@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <sstream>
 #include "mlp.h"
+#include "../prune.h"
 #include "../mtpr_trainer.h"
 #include "../wrapper.h"
 #include "../drivers/basic_drivers.h"
@@ -2434,6 +2435,32 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         MTPR_trainer mtptr(&mtp, settings, false);
         double loss = mtptr.FindLoss(training_set);
         Message("Training Loss: " + std::to_string(loss));
+    }
+    END_COMMAND;
+
+    BEGIN_COMMAND("prune",
+                  "Prunes a potential.",
+                  "mlp prune config.json\n")
+    {
+        if (args.size() != 1)
+        {
+            std::cout << "mlp prune: 1 argument is required, the config.json\n";
+            return 1;
+        }
+
+        SetTagLogStream("dev", &std::cout);
+
+        try
+        {
+            Message("Initializing Pruner...");
+            Prune pruner(args[0]);
+            pruner.run();
+            Message("Pruning complete.");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Error during pruning: " << e.what() << std::endl;
+        }
     }
     END_COMMAND;
 

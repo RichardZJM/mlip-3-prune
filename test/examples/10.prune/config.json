@@ -1,0 +1,13 @@
+{
+  "mtp_file": "data/28.almtp",
+  "pop_size": 96,
+  "n_gen": 3,
+  "time": 300,
+  "save_interval": 100,
+  "ytwy": 6483714564.848065376281738,
+  "regularization": 5e-7,
+  "neigh_count": 46.017803,
+  "xtwx_file": "data/xtwx.bin",
+  "xtwy_file": "data/xtwy.bin",
+  "out_dir": "out"
+}
