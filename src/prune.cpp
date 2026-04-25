@@ -181,21 +181,24 @@ Prune::Prune(const std::string &config_path) : config_path_(config_path) {}
 
 void Prune::run()
 {
+    setenv("OPENBLAS_NUM_THREADS", "1", 1);
+    setenv("MKL_NUM_THREADS", "1", 1);
+    setenv("OMP_NUM_THREADS", "1", 1);
+
     auto set_threads = [](const char *name, int val)
     {
-        auto fn = (void (*)(int))dlsym(RTLD_DEFAULT, name);
+        typedef void (*set_fn)(int);
+        set_fn fn = (set_fn)dlsym(RTLD_DEFAULT, name);
         if (fn)
+        {
             fn(val);
+        }
     };
-    auto set_threads_f = [](const char *name, int val)
-    {
-        auto fn = (void (*)(int *))dlsym(RTLD_DEFAULT, name);
-        if (fn)
-            fn(&val);
-    };
+
     set_threads("openblas_set_num_threads", 1);
+    set_threads("goto_set_num_threads", 1);
     set_threads("MKL_Set_Num_Threads", 1);
-    set_threads_f("blas_set_num_threads_", 1);
+    set_threads("omp_set_num_threads", 1);
 
     int rank = 0, size = 1;
 #ifdef MLIP_MPI
