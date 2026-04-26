@@ -112,7 +112,7 @@ CostCalculator::CostCalculator(int num_moments_, const std::vector<int> &basic_,
 
     std::vector<char> all_ones(scalar_indices.size(), 1);
     base_cost = 1.0;
-    base_cost = calculate(all_ones.data(), scalar_indices.size());
+    base_cost = canonicalize_and_calculate(all_ones.data(), scalar_indices.size());
 
     if (rank == 0)
     {
@@ -120,7 +120,7 @@ CostCalculator::CostCalculator(int num_moments_, const std::vector<int> &basic_,
     }
 }
 
-double CostCalculator::calculate(const char *genes, int n_var) const
+double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
 {
     std::fill(mus_flags_buf.begin(), mus_flags_buf.end(), 0);
     std::fill(rank_flags_buf.begin(), rank_flags_buf.end(), 0);
@@ -190,19 +190,11 @@ double CostCalculator::calculate(const char *genes, int n_var) const
         if (b)
             mus_count++;
 
-    double cost = neigh_count * (24 + 4 * max_rank + 8 * radial_basis_size + 14 +
-                                 4 * mus_count * radial_basis_size + 39 * nbasic) +
-                  9 * ntimes;
+    double raw_cost = neigh_count * (24 + 4 * max_rank + 8 * radial_basis_size + 14 +
+                                     4 * mus_count * radial_basis_size + 39 * nbasic) +
+                      9 * ntimes;
 
-    return cost / base_cost;
-}
-
-void CostCalculator::canonicalize(char *genes, int n_var) const
-{
     // 1. FREE-RIDE RULE
-    // Calculate raw tree exactly ONCE. This populates `to_preserve_buf`, `mus_flags_buf`, and `rank_flags_buf`
-    double raw_cost = calculate(genes, n_var);
-
     for (int i = 0; i < n_var; ++i)
     {
         if (to_preserve_buf[scalar_indices[i]])
@@ -213,7 +205,8 @@ void CostCalculator::canonicalize(char *genes, int n_var) const
 
     // 2. FAST FILL RULE
     // Calculate the absolute allowable threshold relative to the raw tree.
-    double max_incremental_cost = 0.10 * (raw_cost * base_cost);
+    double max_incremental_cost = 0.10 * raw_cost;
+    double total_cost = raw_cost;
 
     bool changed = true;
     while (changed)
@@ -276,9 +269,12 @@ void CostCalculator::canonicalize(char *genes, int n_var) const
 
                         // We loop again in case newly accepted nodes trigger other nodes' dependencies
                         changed = true;
+                        total_cost += incremental_cost;
                     }
                 }
             }
         }
     }
+
+    return total_cost / base_cost;
 }

@@ -1,0 +1,7 @@
+Report the numerical accuracy
+Support validation dataset with path check
+Clean up redundant calcs in cannonicalization
+Ensure that the cost metric is correct of the max rank
+
+Add writing Support
+- inherited and blank

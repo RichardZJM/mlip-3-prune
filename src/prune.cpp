@@ -1,22 +1,3 @@
-#ifndef MLIP_PRUNE_H
-#define MLIP_PRUNE_H
-
-#include "mtpr.h"
-#include <string>
-
-class Prune : public MLMTPR
-{
-public:
-    Prune(const std::string &config_path);
-    ~Prune() = default;
-    void run();
-
-private:
-    std::string config_path_;
-};
-
-#endif
-
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -154,8 +135,7 @@ namespace
         double start_eval = MPI_Wtime();
         for (int i = 0; i < local_count; ++i)
         {
-            cost_calc.canonicalize(local_genes.data() + i * n_var, n_var);
-            local_results[i * 2] = cost_calc.calculate(local_genes.data() + i * n_var, n_var);
+            local_results[i * 2] = cost_calc.canonicalize_and_calculate(local_genes.data() + i * n_var, n_var);
             local_results[i * 2 + 1] = sse_calc.calculate(local_genes.data() + i * n_var);
         }
         eval_time += (MPI_Wtime() - start_eval);
@@ -168,8 +148,7 @@ namespace
         auto start_eval = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < count; ++i)
         {
-            cost_calc.canonicalize(genes.data() + (offset + i) * n_var, n_var);
-            cost_sse[(offset + i) * 2] = cost_calc.calculate(genes.data() + (offset + i) * n_var, n_var);
+            cost_sse[(offset + i) * 2] = cost_calc.canonicalize_and_calculate(genes.data() + (offset + i) * n_var, n_var);
             cost_sse[(offset + i) * 2 + 1] = sse_calc.calculate(genes.data() + (offset + i) * n_var);
         }
         eval_time += std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_eval).count();
@@ -363,7 +342,7 @@ void Prune::run()
             min_e = std::min(min_e, e);
             sum_e += e;
         }
-        std::cout << std::fixed << std::setprecision(2) << "Evaluation times per process: [";
+        std::cout << std::fixed << std::setprecision(2) << "Evaluation times per process:[";
         for (int i = 0; i < size; ++i)
             std::cout << all_evals[i] << "s" << (i == size - 1 ? "" : ", ");
         std::cout << "]\n";
