@@ -2435,7 +2435,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 #endif
         MTPR_trainer mtptr(&mtp, settings, false);
         double loss = mtptr.FindLoss(training_set);
-        Message("Training Loss: " + std::to_string(loss));
+        Message("Dataset Loss: " + std::to_string(loss));
     }
     END_COMMAND;
 
