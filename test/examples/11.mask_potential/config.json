@@ -1,0 +1,19 @@
+{
+  "mtp_file": "../10.prune/data/28.almtp",
+  "pop_size": 96,
+  "n_gen": 3,
+  "time": 300,
+  "save_interval": 100,
+  "regularization": 1e-8,
+  "neigh_count": 46.017803,
+
+  "ytwy_train": 4530536105.428369522094727,
+  "xtwx_train_file": "../10.prune/data/xtwx_train.bin",
+  "xtwy_train_file": "../10.prune/data/xtwy_train.bin",
+
+  "ytwy_val": 1016717595.225109100341797,
+  "xtwx_val_file": "../10.prune/data/xtwx_val.bin",
+  "xtwy_val_file": "../10.prune/data/xtwy_val.bin",
+
+  "out_dir": "out"
+}

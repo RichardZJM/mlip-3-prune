@@ -113,7 +113,6 @@ namespace
             if (!latest_pop_file.empty())
                 break;
         }
-        make_dir(out_dir);
     }
 
     void evaluate_population(int offset, int count, int n_var, int mpi_rank, int mpi_size,
@@ -290,6 +289,7 @@ void Prune::run()
     if (rank == 0)
     {
         resolve_output_dir(config["out_dir"].get<std::string>(), out_dir, latest_pop_file);
+        make_dir(out_dir);
         if (!latest_pop_file.empty())
         {
             std::cout << "Restarting from previous results: " << latest_pop_file << "\n";
