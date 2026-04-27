@@ -2484,7 +2484,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
                 try
                 {
                     Masker masker(args[0]);
-                    auto mask = ReadMask(args[1], std::stoi(args[2]), masker.alpha_scalar_moments);
+                    auto mask = Masker::ReadMask(args[1], std::stoi(args[2]), masker.alpha_scalar_moments);
                     masker.ApplyMask(mask, nullptr);
                     masker.Save(args[3]);
                     std::cout << "Successfully wrote blank pruned potential to " << args[3] << "\n";
@@ -2520,8 +2520,8 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
                 try
                 {
                     Masker masker(args[0]);
-                    auto mask = ReadMask(args[2], std::stoi(args[3]), masker.alpha_scalar_moments);
-                    auto theta = SolveTheta(args[1], mask, masker.species_count);
+                    auto mask = Masker::ReadMask(args[2], std::stoi(args[3]), masker.alpha_scalar_moments);
+                    auto theta = Masker::SolveTheta(args[1], mask, masker.species_count);
                     masker.ApplyMask(mask, &theta);
                     masker.Save(args[4]);
                     std::cout << "Successfully wrote inherited pruned potential to " << args[4] << "\n";

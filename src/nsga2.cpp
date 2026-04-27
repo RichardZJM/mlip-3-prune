@@ -135,135 +135,170 @@ void NSGA2::generate_offspring()
 
 void NSGA2::survival(int num_inds)
 {
-    std::vector<std::vector<int>> fronts(1);
-    std::vector<int> domination_count(num_inds, 0);
-    std::vector<std::vector<int>> dominates(num_inds);
+    if (sorted_idx.size() < (size_t)num_inds)
+    {
+        sorted_idx.resize(num_inds);
+        ind_front.resize(num_inds);
+        min_y.reserve(num_inds);
 
+        front_pool.resize(num_inds);
+        front_starts.reserve(num_inds + 1);
+        insert_pos.reserve(num_inds + 1);
+
+        next_gen_indices.reserve(pop_size);
+
+        next_genes.resize(genes.size());
+        next_cost_sse.resize(cost_sse.size());
+        next_rank.resize(rank.size());
+        next_crowding.resize(crowding.size());
+    }
+
+    // 1. O(N log N) Pre-sort by Obj1 (asc), then Obj2 (asc)
+    std::iota(sorted_idx.begin(), sorted_idx.begin() + num_inds, 0);
+    std::sort(sorted_idx.begin(), sorted_idx.begin() + num_inds, [&](int a, int b)
+              {
+        double c_a = cost_sse[a * 2], s_a = cost_sse[a * 2 + 1];
+        double c_b = cost_sse[b * 2], s_b = cost_sse[b * 2 + 1];
+        if (std::abs(c_a - c_b) > 1e-9) return c_a < c_b;
+        return s_a < s_b; });
+
+    // 2. O(N log N) Front Assignment using Patience Sort / LIS Sweep
+    min_y.clear();
     for (int i = 0; i < num_inds; ++i)
     {
-        for (int j = i + 1; j < num_inds; ++j)
+        int p = sorted_idx[i];
+        double cy = cost_sse[p * 2 + 1];
+
+        if (i > 0)
         {
-            double cost_i = cost_sse[i * 2], sse_i = cost_sse[i * 2 + 1];
-            double cost_j = cost_sse[j * 2], sse_j = cost_sse[j * 2 + 1];
-
-            bool i_dom_j = (cost_i <= cost_j && sse_i <= sse_j) &&
-                           (cost_i < cost_j || sse_i < sse_j);
-
-            bool j_dom_i = (cost_j <= cost_i && sse_j <= sse_i) &&
-                           (cost_j < cost_i || sse_j < sse_i);
-
-            if (i_dom_j)
+            int prev_p = sorted_idx[i - 1];
+            if (std::abs(cost_sse[p * 2] - cost_sse[prev_p * 2]) <= 1e-9 &&
+                std::abs(cy - cost_sse[prev_p * 2 + 1]) <= 1e-9)
             {
-                dominates[i].push_back(j);
-                domination_count[j]++;
-            }
-            else if (j_dom_i)
-            {
-                dominates[j].push_back(i);
-                domination_count[i]++;
+                ind_front[p] = ind_front[prev_p];
+                rank[p] = ind_front[p];
+                continue;
             }
         }
-        if (domination_count[i] == 0)
-        {
-            rank[i] = 0;
-            fronts[0].push_back(i);
-        }
+
+        auto it = std::upper_bound(min_y.begin(), min_y.end(), cy);
+        int f = std::distance(min_y.begin(), it);
+        ind_front[p] = f;
+        rank[p] = f;
+
+        if (it == min_y.end())
+            min_y.push_back(cy);
+        else
+            *it = cy;
     }
 
-    int i = 0;
-    while (i < (int)fronts.size())
+    // 3. Group by front sequentially (preserves the Obj1 ascending sort perfectly inside each front)
+    int num_fronts = min_y.size();
+    front_starts.assign(num_fronts + 1, 0);
+    for (int i = 0; i < num_inds; ++i)
     {
-        std::vector<int> next_front;
-        for (int p : fronts[i])
-        {
-            for (int q : dominates[p])
-            {
-                domination_count[q]--;
-                if (domination_count[q] == 0)
-                {
-                    rank[q] = i + 1;
-                    next_front.push_back(q);
-                }
-            }
-        }
-
-        if (next_front.empty())
-            break;
-
-        fronts.push_back(next_front);
-        i++;
+        front_starts[ind_front[i] + 1]++;
+    }
+    for (int f = 0; f < num_fronts; ++f)
+    {
+        front_starts[f + 1] += front_starts[f];
     }
 
-    std::vector<int> next_gen_indices;
-    next_gen_indices.reserve(pop_size);
-
-    for (auto &front : fronts)
+    insert_pos = front_starts;
+    for (int i = 0; i < num_inds; ++i)
     {
-        if (front.empty())
+        int p = sorted_idx[i];
+        front_pool[insert_pos[ind_front[p]]++] = p;
+    }
+
+    // 4. Survivor Selection + 1D Extracted Crowding Distance (Requires 0 std::sorts!)
+    next_gen_indices.clear();
+    for (int f = 0; f < num_fronts; ++f)
+    {
+        int start = front_starts[f];
+        int end = front_starts[f + 1];
+        int front_size = end - start;
+
+        if (front_size == 0)
             continue;
 
-        for (int idx : front)
-            crowding[idx] = 0.0;
-
-        for (int m = 0; m < 2; ++m)
+        if (front_size == 1)
         {
-            std::sort(front.begin(), front.end(), [&](int a, int b)
-                      { return (m == 0) ? cost_sse[a * 2] < cost_sse[b * 2] : cost_sse[a * 2 + 1] < cost_sse[b * 2 + 1]; });
-
-            crowding[front.front()] = INFINITY;
-            crowding[front.back()] = INFINITY;
-
-            double min_val = (m == 0) ? cost_sse[front.front() * 2] : cost_sse[front.front() * 2 + 1];
-            double max_val = (m == 0) ? cost_sse[front.back() * 2] : cost_sse[front.back() * 2 + 1];
-
-            if (max_val - min_val <= 1e-9)
-                continue;
-
-            for (size_t j = 1; j < front.size() - 1; ++j)
-            {
-                double diff = (m == 0) ? cost_sse[front[j + 1] * 2] - cost_sse[front[j - 1] * 2]
-                                       : cost_sse[front[j + 1] * 2 + 1] - cost_sse[front[j - 1] * 2 + 1];
-                crowding[front[j]] += diff / (max_val - min_val);
-            }
+            crowding[front_pool[start]] = INFINITY;
         }
-
-        if (next_gen_indices.size() + front.size() <= (size_t)pop_size)
+        else if (front_size == 2)
         {
-            for (int idx : front)
-                next_gen_indices.push_back(idx);
+            crowding[front_pool[start]] = INFINITY;
+            crowding[front_pool[start + 1]] = INFINITY;
         }
         else
         {
-            std::sort(front.begin(), front.end(), [&](int a, int b)
+            crowding[front_pool[start]] = INFINITY;
+            crowding[front_pool[end - 1]] = INFINITY;
+
+            double min_c = cost_sse[front_pool[start] * 2];
+            double max_c = cost_sse[front_pool[end - 1] * 2];
+
+            // Due to Non-Dominated property + Obj1 being natively asc, Obj2 is natively desc
+            double max_s = cost_sse[front_pool[start] * 2 + 1];
+            double min_s = cost_sse[front_pool[end - 1] * 2 + 1];
+
+            double inv_c = (max_c - min_c > 1e-9) ? 1.0 / (max_c - min_c) : 0.0;
+            double inv_s = (max_s - min_s > 1e-9) ? 1.0 / (max_s - min_s) : 0.0;
+
+            for (int j = 1; j < front_size - 1; ++j)
+            {
+                int p_prev = front_pool[start + j - 1];
+                int p_curr = front_pool[start + j];
+                int p_next = front_pool[start + j + 1];
+
+                double diff_c = cost_sse[p_next * 2] - cost_sse[p_prev * 2];
+                double diff_s = cost_sse[p_prev * 2 + 1] - cost_sse[p_next * 2 + 1]; // Prev is natively larger
+
+                crowding[p_curr] = (diff_c * inv_c) + (diff_s * inv_s);
+            }
+        }
+
+        if (next_gen_indices.size() + front_size <= (size_t)pop_size)
+        {
+            next_gen_indices.insert(next_gen_indices.end(),
+                                    front_pool.begin() + start,
+                                    front_pool.begin() + end);
+        }
+        else
+        {
+            auto front_begin = front_pool.begin() + start;
+            auto front_end = front_pool.begin() + end;
+            std::sort(front_begin, front_end, [&](int a, int b)
                       { return crowding[a] > crowding[b]; });
+
             int needed = pop_size - next_gen_indices.size();
-            for (int j = 0; j < needed; ++j)
-                next_gen_indices.push_back(front[j]);
+            next_gen_indices.insert(next_gen_indices.end(),
+                                    front_begin,
+                                    front_begin + needed);
             break;
         }
     }
 
-    // Directly reorder into a consistent layout for the next generation
-    std::vector<char> next_genes(pop_size * n_var);
-    std::vector<double> next_cost_sse(pop_size * 2);
-    std::vector<int> next_rank(pop_size);
-    std::vector<double> next_crowding(pop_size);
-
+    // 5. Ping-pong swap
     for (int k = 0; k < pop_size; ++k)
     {
         int old_idx = next_gen_indices[k];
-        std::copy(genes.begin() + old_idx * n_var, genes.begin() + (old_idx + 1) * n_var, next_genes.begin() + k * n_var);
+
+        std::copy(genes.begin() + old_idx * n_var,
+                  genes.begin() + (old_idx + 1) * n_var,
+                  next_genes.begin() + k * n_var);
+
         next_cost_sse[k * 2] = cost_sse[old_idx * 2];
         next_cost_sse[k * 2 + 1] = cost_sse[old_idx * 2 + 1];
         next_rank[k] = rank[old_idx];
         next_crowding[k] = crowding[old_idx];
     }
 
-    // Deposit updated info cleanly
-    std::copy(next_genes.begin(), next_genes.end(), genes.begin());
-    std::copy(next_cost_sse.begin(), next_cost_sse.end(), cost_sse.begin());
-    std::copy(next_rank.begin(), next_rank.end(), rank.begin());
-    std::copy(next_crowding.begin(), next_crowding.end(), crowding.begin());
+    std::swap(genes, next_genes);
+    std::swap(cost_sse, next_cost_sse);
+    std::swap(rank, next_rank);
+    std::swap(crowding, next_crowding);
 }
 
 void NSGA2::save_pareto(const std::string &prefix)

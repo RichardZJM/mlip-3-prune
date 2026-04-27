@@ -16,7 +16,7 @@ extern "C" void dposv_(const char *uplo, const int *n, const int *nrhs,
 namespace
 {
     template <typename T>
-    std::vector<T> read_binary_local(const std::string &filename)
+    std::vector<T> read_binary(const std::string &filename)
     {
         std::ifstream file(filename, std::ios::binary | std::ios::ate);
         if (!file)
@@ -217,7 +217,7 @@ void Masker::ApplyMask(const std::vector<char> &mask, const std::vector<double> 
     {
         inited = false;
         radial_func_count = sorted_used_mus.size();
-        regression_coeffs.clear(); // Forces physical blankness out of the save file.
+        regression_coeffs.clear();
     }
 
     delete[] alpha_index_basic;
@@ -235,7 +235,7 @@ void Masker::ApplyMask(const std::vector<char> &mask, const std::vector<double> 
     alpha_count = alpha_scalar_moments + 1;
 }
 
-std::vector<char> ReadMask(const std::string &mask_file, int row, int expected_size)
+std::vector<char> Masker::ReadMask(const std::string &mask_file, int row, int expected_size)
 {
     std::ifstream f(mask_file);
     if (!f.is_open())
@@ -271,7 +271,7 @@ std::vector<char> ReadMask(const std::string &mask_file, int row, int expected_s
     throw std::runtime_error("Row " + std::to_string(row) + " not found in mask file.");
 }
 
-std::vector<double> SolveTheta(const std::string &config_file, const std::vector<char> &mask, int species_count)
+std::vector<double> Masker::SolveTheta(const std::string &config_file, const std::vector<char> &mask, int species_count)
 {
     std::ifstream f(config_file);
     if (!f.is_open())
@@ -282,8 +282,8 @@ std::vector<double> SolveTheta(const std::string &config_file, const std::vector
     std::string xtwy_file = config["xtwy_train_file"].get<std::string>();
     double reg = config.value("regularization", 0.0);
 
-    auto xtwx = read_binary_local<double>(xtwx_file);
-    auto xtwy = read_binary_local<double>(xtwy_file);
+    auto xtwx = read_binary<double>(xtwx_file);
+    auto xtwy = read_binary<double>(xtwy_file);
 
     int n_var = mask.size();
     int n_features = species_count + n_var;
