@@ -4,7 +4,7 @@
   "n_gen": 3,
   "time": 300,
   "save_interval": 100,
-  "regularization": 5e-7,
+  "regularization": 1e-8,
   "neigh_count": 46.017803,
 
   "ytwy_train": 4530536105.428369522094727,

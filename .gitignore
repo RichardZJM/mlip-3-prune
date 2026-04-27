@@ -1,5 +1,6 @@
 # git repos for docker-build.sh
 external/*
+.vscode
 
 # OpenBLAS
 OpenBLAS/*

@@ -7,7 +7,7 @@ mkdir -p "$OUT_DIR"
 
 
 # Performs pruning using config.json
-mpirun -np 4 --map-by core --bind-to core "$MLP_EXE" prune config.json 
+mpirun -np 1 --map-by core --bind-to core "$MLP_EXE" prune config.json 
 
 # Noted that the pruner restarts using successive folders {out_dir}_{n+1}
 # Be careful about how to set up your fodler naming schemes

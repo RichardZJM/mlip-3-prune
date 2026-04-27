@@ -155,7 +155,13 @@ namespace
     }
 }
 
-Prune::Prune(const std::string &config_path) : config_path_(config_path) {}
+Prune::Prune(const std::string &config_path) : config_path_(config_path)
+{
+    alpha_moment_mapping = nullptr;
+    alpha_index_times = nullptr;
+    alpha_index_basic = nullptr;
+    p_RadialBasis = nullptr;
+}
 
 void Prune::run()
 {
