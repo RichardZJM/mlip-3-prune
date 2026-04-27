@@ -4,10 +4,16 @@
   "n_gen": 3,
   "time": 300,
   "save_interval": 100,
-  "ytwy": 6483714564.848065376281738,
   "regularization": 5e-7,
   "neigh_count": 46.017803,
-  "xtwx_file": "data/xtwx.bin",
-  "xtwy_file": "data/xtwy.bin",
+
+  "ytwy_train": 4530536105.428369522094727,
+  "xtwx_train_file": "data/xtwx_train.bin",
+  "xtwy_train_file": "data/xtwy_train.bin",
+
+  "ytwy_val": 1016717595.225109100341797,
+  "xtwx_val_file": "data/xtwx_val.bin",
+  "xtwy_val_file": "data/xtwy_val.bin",
+
   "out_dir": "out"
 }

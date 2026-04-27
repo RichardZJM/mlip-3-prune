@@ -1,19 +1,59 @@
 #include "evaluator.h"
 #include <iostream>
+#include <iomanip>
 #include <set>
 #include <cmath>
 #include <algorithm>
 
 // --- SSE Calculator ---
-SSECalculator::SSECalculator(const std::vector<double> &xtwx_, const std::vector<double> &xtwy_,
-                             double ytwy_, double reg, int n_species_, int n_var, int rank)
-    : xtwx(xtwx_), xtwy(xtwy_), ytwy(ytwy_), n_species(n_species_)
+SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::vector<double> &xtwy_train_, double ytwy_train_,
+                             const std::vector<double> &xtwx_val_, const std::vector<double> &xtwy_val_, double ytwy_val_,
+                             bool is_self_validating_, double reg, int n_species_, int n_var, int rank)
+    : xtwx_train(xtwx_train_), xtwy_train(xtwy_train_), ytwy_train(ytwy_train_),
+      xtwx_val(xtwx_val_), xtwy_val(xtwy_val_), ytwy_val(ytwy_val_),
+      is_self_validating(is_self_validating_), n_species(n_species_)
 {
     n_features = n_species + n_var;
 
+    // Add regularization ONLY to the training X^T X matrix diagonal for stability.
     for (int i = 0; i < n_features; ++i)
     {
-        xtwx[i * n_features + i] += reg;
+        xtwx_train[i * n_features + i] += reg;
+    }
+
+    if (rank == 0)
+    {
+        // Compute condition number on rank 0
+        std::vector<double> A_copy = xtwx_train;
+        std::vector<double> w(n_features);
+        char jobz = 'N';
+        char uplo = 'U';
+        int n_eq = n_features;
+        double lwork_query;
+        int info_dsyev = 0;
+        int lwork = -1;
+
+        // Query optimal workspace
+        dsyev_(&jobz, &uplo, &n_eq, A_copy.data(), &n_eq, w.data(), &lwork_query, &lwork, &info_dsyev);
+        lwork = static_cast<int>(lwork_query);
+        std::vector<double> work(lwork);
+
+        // Compute exact eigenvalues
+        dsyev_(&jobz, &uplo, &n_eq, A_copy.data(), &n_eq, w.data(), work.data(), &lwork, &info_dsyev);
+
+        if (info_dsyev == 0)
+        {
+            double min_eig = w.front();
+            double max_eig = w.back();
+            double cond = (min_eig > 0) ? (max_eig / min_eig) : INFINITY;
+
+            std::cout << "Condition Number: " << std::scientific << cond << std::defaultfloat << "\n";
+            if (cond > 1e12)
+            {
+                std::cout << "WARNING: Condition number is extremely high. I hope you know what you are doing.\n";
+                std::cout << "         Consider increasing the regularization parameter to improve stability.\n";
+            }
+        }
     }
 
     active_buf.reserve(n_features);
@@ -27,7 +67,66 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_, const std::vector
     if (rank == 0)
     {
         std::cout << "Base SSE: " << base_sse << "\n";
+        if (is_self_validating)
+        {
+            std::cout << "Mode: Fast Training Optimization (No separate validation set)\n";
+        }
+        else
+        {
+            std::cout << "Mode: Validation Set Evaluation\n";
+        }
     }
+}
+
+bool SSECalculator::solve_theta(int n) const
+{
+    for (int i = 0; i < n; ++i)
+    {
+        B_buf[i] = xtwy_train[active_buf[i]];
+        for (int j = 0; j < n; j++)
+        {
+            A_buf[i * n + j] = xtwx_train[active_buf[i] * n_features + active_buf[j]];
+        }
+    }
+
+    char uplo = 'U';
+    int nrhs = 1, info = 0;
+    // B_buf is completely overwritten with the solution (Theta)
+    dposv_(&uplo, &n, &nrhs, A_buf.data(), &n, B_buf.data(), &n, &info);
+
+    return (info == 0);
+}
+
+double SSECalculator::compute_train_sse(int n) const
+{
+    double theta_dot_xtwy = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        theta_dot_xtwy += B_buf[i] * xtwy_train[active_buf[i]];
+    }
+    return ytwy_train - theta_dot_xtwy;
+}
+
+double SSECalculator::compute_val_sse(int n) const
+{
+    double p1 = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        p1 += B_buf[i] * xtwy_val[active_buf[i]];
+    }
+
+    double p2 = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        double v_i = 0;
+        for (int j = 0; j < n; j++)
+        {
+            v_i += xtwx_val[active_buf[i] * n_features + active_buf[j]] * B_buf[j];
+        }
+        p2 += B_buf[i] * v_i;
+    }
+
+    return ytwy_val - 2.0 * p1 + p2;
 }
 
 double SSECalculator::calculate(const char *genes) const
@@ -48,29 +147,14 @@ double SSECalculator::calculate(const char *genes) const
     if (n == 0)
         return INFINITY;
 
-    for (int i = 0; i < n; ++i)
-    {
-        B_buf[i] = xtwy[active_buf[i]];
-        for (int j = 0; j < n; j++)
-        {
-            A_buf[i * n + j] = xtwx[active_buf[i] * n_features + active_buf[j]];
-        }
-    }
-
-    char uplo = 'U';
-    int nrhs = 1, info = 0;
-    dposv_(&uplo, &n, &nrhs, A_buf.data(), &n, B_buf.data(), &n, &info);
-
-    if (info > 0)
+    // --- Phase 1: Train ---
+    if (!solve_theta(n))
         return INFINITY;
 
-    double theta_dot_xtwy = 0;
-    for (int i = 0; i < n; ++i)
-    {
-        theta_dot_xtwy += B_buf[i] * xtwy[active_buf[i]];
-    }
+    // --- Phase 2: Validate ---
+    double raw_sse = is_self_validating ? compute_train_sse(n) : compute_val_sse(n);
 
-    return (ytwy - theta_dot_xtwy) / base_sse;
+    return raw_sse / base_sse;
 }
 
 // --- Cost Calculator ---
@@ -80,15 +164,12 @@ CostCalculator::CostCalculator(int num_moments_, const std::vector<int> &basic_,
     : num_moments(num_moments_), basic_indices(basic_), scalar_indices(scalar_),
       neigh_count(neigh), radial_basis_size(radial)
 {
-    std::set<int> mus_set, rank_set;
+    std::set<int> mus_set;
     for (size_t i = 0; i < basic_.size() / 4; ++i)
     {
         mus_set.insert(basic_[i * 4]);
-        int r = std::max({basic_[i * 4 + 1], basic_[i * 4 + 2], basic_[i * 4 + 3]});
-        rank_set.insert(r);
     }
     n_mus = mus_set.size();
-    n_ranks = rank_set.size();
 
     std::vector<std::vector<int>> py_parents(num_moments);
     for (size_t i = 0; i < times_.size() / 4; ++i)
@@ -107,7 +188,6 @@ CostCalculator::CostCalculator(int num_moments_, const std::vector<int> &basic_,
     }
 
     mus_flags_buf.resize(n_mus);
-    rank_flags_buf.resize(n_ranks);
     to_preserve_buf.resize(num_moments);
 
     std::vector<char> all_ones(scalar_indices.size(), 1);
@@ -123,7 +203,6 @@ CostCalculator::CostCalculator(int num_moments_, const std::vector<int> &basic_,
 double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
 {
     std::fill(mus_flags_buf.begin(), mus_flags_buf.end(), 0);
-    std::fill(rank_flags_buf.begin(), rank_flags_buf.end(), 0);
     std::fill(to_preserve_buf.begin(), to_preserve_buf.end(), 0);
 
     while (!q_buf.empty())
@@ -163,6 +242,8 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
     }
 
     int ntimes = 0, nbasic = 0;
+    int current_max_active_rank = -1;
+
     for (int i = 0; i < num_moments; ++i)
     {
         if (to_preserve_buf[i])
@@ -176,21 +257,19 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
                 int r = std::max({basic_indices[i * 4 + 1], basic_indices[i * 4 + 2], basic_indices[i * 4 + 3]});
                 if (mu < n_mus)
                     mus_flags_buf[mu] = 1;
-                if (r < n_ranks)
-                    rank_flags_buf[r] = 1;
+                if (r > current_max_active_rank)
+                    current_max_active_rank = r;
             }
         }
     }
 
-    int max_rank = 0, mus_count = 0;
-    for (char b : rank_flags_buf)
-        if (b)
-            max_rank++;
+    int max_rank_cost = (current_max_active_rank == -1) ? 0 : (current_max_active_rank + 1);
+    int mus_count = 0;
     for (char b : mus_flags_buf)
         if (b)
             mus_count++;
 
-    double raw_cost = neigh_count * (24 + 4 * max_rank + 8 * radial_basis_size + 14 +
+    double raw_cost = neigh_count * (24 + 4 * max_rank_cost + 8 * radial_basis_size + 14 +
                                      4 * mus_count * radial_basis_size + 39 * nbasic) +
                       9 * ntimes;
 
@@ -204,7 +283,6 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
     }
 
     // 2. FAST FILL RULE
-    // Calculate the absolute allowable threshold relative to the raw tree.
     double max_incremental_cost = 0.10 * raw_cost;
     double total_cost = raw_cost;
 
@@ -218,7 +296,6 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
             {
                 int m = scalar_indices[i];
 
-                // Check if all immediate dependencies are strictly met in O(1) checks
                 bool deps_met = true;
                 for (int j = parents_idx[m]; j < parents_idx[m + 1]; ++j)
                 {
@@ -231,7 +308,6 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
 
                 if (deps_met)
                 {
-                    // Calculate exact incremental cost without traversing the tree
                     double incremental_cost = 0;
                     int edges = (parents_idx[m + 1] - parents_idx[m]) / 2;
 
@@ -247,13 +323,13 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
 
                         if (mu < n_mus && !mus_flags_buf[mu])
                             incremental_cost += neigh_count * 4 * radial_basis_size;
-                        if (r < n_ranks && !rank_flags_buf[r])
-                            incremental_cost += neigh_count * 4;
+
+                        if (r > current_max_active_rank)
+                            incremental_cost += neigh_count * 4 * (r - current_max_active_rank);
                     }
 
                     if (incremental_cost <= max_incremental_cost)
                     {
-                        // Unionize: apply the gene and update the state arrays immediately
                         genes[i] = 1;
                         to_preserve_buf[m] = 1;
 
@@ -263,11 +339,9 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
                             int r = std::max({basic_indices[m * 4 + 1], basic_indices[m * 4 + 2], basic_indices[m * 4 + 3]});
                             if (mu < n_mus)
                                 mus_flags_buf[mu] = 1;
-                            if (r < n_ranks)
-                                rank_flags_buf[r] = 1;
+                            if (r > current_max_active_rank)
+                                current_max_active_rank = r;
                         }
-
-                        // We loop again in case newly accepted nodes trigger other nodes' dependencies
                         changed = true;
                         total_cost += incremental_cost;
                     }

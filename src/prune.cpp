@@ -50,7 +50,6 @@ namespace
         std::vector<T> buffer(elements);
         if (elements > 0)
         {
-            // Fix: read only exactly what the vector can hold
             file.read(reinterpret_cast<char *>(buffer.data()), elements * sizeof(T));
         }
         return buffer;
@@ -193,6 +192,7 @@ void Prune::run()
             throw std::runtime_error("Config not found: " + config_path_);
         config = json::parse(f);
     }
+
 #ifdef MLIP_MPI
     std::string config_str = (rank == 0) ? config.dump() : "";
     int len = static_cast<int>(config_str.size());
@@ -203,7 +203,6 @@ void Prune::run()
         config = json::parse(config_str);
 #endif
 
-    // Fix: All ranks call Load() to prevent MLMTPR destructor crash
     this->Load(config["mtp_file"].get<std::string>());
 
     int r_size = p_RadialBasis->size;
@@ -221,12 +220,31 @@ void Prune::run()
     for (int i = 0; i < alpha_scalar_moments; ++i)
         map_mom.push_back(alpha_moment_mapping[i]);
 
-    std::vector<double> xtwx, xtwy;
+    // Parse variables explicitly
+    std::string xtwx_train_file = config["xtwx_train_file"].get<std::string>();
+    std::string xtwy_train_file = config["xtwy_train_file"].get<std::string>();
+    double ytwy_train = config["ytwy_train"].get<double>();
+
+    std::string xtwx_val_file = config["xtwx_val_file"].get<std::string>();
+    std::string xtwy_val_file = config["xtwy_val_file"].get<std::string>();
+    double ytwy_val = config["ytwy_val"].get<double>();
+
+    bool is_self_validating = (xtwx_train_file == xtwx_val_file) &&
+                              (xtwy_train_file == xtwy_val_file) &&
+                              (ytwy_train == ytwy_val);
+
+    std::vector<double> xtwx_train, xtwy_train, xtwx_val, xtwy_val;
     if (rank == 0)
     {
-        xtwx = read_binary<double>(config["xtwx_file"]);
-        xtwy = read_binary<double>(config["xtwy_file"]);
+        xtwx_train = read_binary<double>(xtwx_train_file);
+        xtwy_train = read_binary<double>(xtwy_train_file);
+        if (!is_self_validating)
+        {
+            xtwx_val = read_binary<double>(xtwx_val_file);
+            xtwy_val = read_binary<double>(xtwy_val_file);
+        }
     }
+
 #ifdef MLIP_MPI
     auto bcast_vec_d = [&](std::vector<double> &v)
     {
@@ -237,11 +255,20 @@ void Prune::run()
         if (sz > 0)
             MPI_Bcast(v.data(), sz, MPI_DOUBLE, 0, MPI_COMM_WORLD);
     };
-    bcast_vec_d(xtwx);
-    bcast_vec_d(xtwy);
+
+    bcast_vec_d(xtwx_train);
+    bcast_vec_d(xtwy_train);
+    if (!is_self_validating)
+    {
+        bcast_vec_d(xtwx_val);
+        bcast_vec_d(xtwy_val);
+    }
 #endif
 
-    SSECalculator sse_calc(xtwx, xtwy, config["ytwy"], config.value("regularization", 0.0), spec_cnt, a_sca_cnt, rank);
+    SSECalculator sse_calc(xtwx_train, xtwy_train, ytwy_train,
+                           xtwx_val, xtwy_val, ytwy_val,
+                           is_self_validating, config.value("regularization", 0.0), spec_cnt, a_sca_cnt, rank);
+
     CostCalculator cost_calc(a_mom_cnt, idx_basic, idx_times, map_mom, config["neigh_count"], r_size, rank);
 
     int pop_size = config["pop_size"];
@@ -352,6 +379,6 @@ void Prune::run()
 #endif
     }
 #ifdef MLIP_MPI
-    MPI_Barrier(MPI_COMM_WORLD); // Moved outside rank 0 check
+    MPI_Barrier(MPI_COMM_WORLD);
 #endif
 }

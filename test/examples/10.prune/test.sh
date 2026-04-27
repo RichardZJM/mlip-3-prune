@@ -27,3 +27,8 @@ mpirun -np 4 --map-by core --bind-to core "$MLP_EXE" prune config.json
 #   "xtwy_file": "data/xtwy.bin",
 #   "out_dir": "optimization_results"
 # }
+
+
+#   "ytwy_val": 1016717595.225109100341797,
+#   "xtwx_val_file": "data/xtwx_val.bin",
+#   "xtwy_val_file": "data/xtwy_val.bin",

@@ -1,7 +1,8 @@
 Report the numerical accuracy
-Support validation dataset with path check
-Clean up redundant calcs in cannonicalization
 Ensure that the cost metric is correct of the max rank
+
+More semantic reporting during calcualte loss / extract problem
+
 
 Add writing Support
 - inherited and blank
