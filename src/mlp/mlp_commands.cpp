@@ -6,6 +6,7 @@
 #include <sstream>
 #include "mlp.h"
 #include "../prune.h"
+#include "../masker.h"
 #include "../mtpr_trainer.h"
 #include "../wrapper.h"
 #include "../drivers/basic_drivers.h"
@@ -2460,6 +2461,79 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         catch (const std::exception &e)
         {
             std::cerr << "Error during pruning: " << e.what() << std::endl;
+        }
+    }
+    END_COMMAND;
+
+    BEGIN_COMMAND("mask_blank",
+                  "Creates a blank pruned potential based on a mask row.",
+                  "mlp mask_blank base.mtp mask.csv row out.mtp\n")
+    {
+        if (args.size() != 4)
+        {
+            std::cerr << "Usage: mlp mask_blank base.mtp mask.csv row out.mtp\n";
+        }
+        else
+        {
+            int rank = 0;
+#ifdef MLIP_MPI
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
+            if (rank == 0)
+            {
+                try
+                {
+                    Masker masker(args[0]);
+                    auto mask = ReadMask(args[1], std::stoi(args[2]), masker.alpha_scalar_moments);
+                    masker.ApplyMask(mask, nullptr);
+                    masker.Save(args[3]);
+                    std::cout << "Successfully wrote blank pruned potential to " << args[3] << "\n";
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Error: " << e.what() << "\n";
+                }
+            }
+#ifdef MLIP_MPI
+            MPI_Barrier(MPI_COMM_WORLD);
+#endif
+        }
+    }
+    END_COMMAND;
+
+    BEGIN_COMMAND("mask_inherited",
+                  "Creates a trained pruned potential by refitting linear parameters to a mask row.",
+                  "mlp mask_inherited base.mtp config.json mask.csv row out.mtp\n")
+    {
+        if (args.size() != 5)
+        {
+            std::cerr << "Usage: mlp mask_inherited base.mtp config.json mask.csv row out.mtp\n";
+        }
+        else
+        {
+            int rank = 0;
+#ifdef MLIP_MPI
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
+            if (rank == 0)
+            {
+                try
+                {
+                    Masker masker(args[0]);
+                    auto mask = ReadMask(args[2], std::stoi(args[3]), masker.alpha_scalar_moments);
+                    auto theta = SolveTheta(args[1], mask, masker.species_count);
+                    masker.ApplyMask(mask, &theta);
+                    masker.Save(args[4]);
+                    std::cout << "Successfully wrote inherited pruned potential to " << args[4] << "\n";
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Error: " << e.what() << "\n";
+                }
+            }
+#ifdef MLIP_MPI
+            MPI_Barrier(MPI_COMM_WORLD);
+#endif
         }
     }
     END_COMMAND;

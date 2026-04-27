@@ -20,15 +20,16 @@ mpirun -np 4 --map-by core --bind-to core "$MLP_EXE" prune config.json
 #   "n_gen": 30000,
 #   "time": 86000,
 #   "save_interval": 1000,
-#   "ytwy": 6483714564.848065376281738,
 #   "regularization": 5e-7,
 #   "neigh_count": 46.017803,
-#   "xtwx_file": "data/xtwx.bin",
-#   "xtwy_file": "data/xtwy.bin",
-#   "out_dir": "optimization_results"
-# }
 
+#   "ytwy_train": 4530536105.428369522094727,
+#   "xtwx_train_file": "data/xtwx_train.bin",
+#   "xtwy_train_file": "data/xtwy_train.bin",
 
 #   "ytwy_val": 1016717595.225109100341797,
 #   "xtwx_val_file": "data/xtwx_val.bin",
 #   "xtwy_val_file": "data/xtwy_val.bin",
+
+#   "out_dir": "out"
+# }
