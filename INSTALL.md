@@ -34,13 +34,13 @@ Optionally, specify a BLAS vendor. See [options](https://cmake.org/cmake/help/la
 cmake -DBLA_VENDOR=OpenBLAS ..
 ```
 
-After configuration, the executables can be built with make command:
+After configuration, the executables can be compiled with make command:
 
 ```bash
 make -j <n>
 ```
 
-The `build/libmlip_interface.a` can be used with the MLIP-LAMMPS interface as usual.
+The executable will be placed in `bin/libmlip_interface.a`. This is same as the original MLIP-3 package. The `lib/libmlip_interface.a` can be used with the MLIP-3-LAMMPS interface as usual.
 
 You can run the test suite with:
 
