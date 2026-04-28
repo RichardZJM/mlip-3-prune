@@ -27,13 +27,15 @@ OUT_DIR=./out
 #   "regularization": 5e-7,             Regularizaton. Adjust this to balance conditioning and heuristic accuracy.
 #   "neigh_count": 46.017803,           Expected neighbor count. Choose this based on the training set of desired simulation.
 
-#   "ytwy_train": 4530536105.428369522094727,
-#   "xtwx_train_file": "data/xtwx_train.bin",
-#   "xtwy_train_file": "data/xtwy_train.bin",
+#   "seed": 42      Random Seed for evo algo
 
-#   "ytwy_val": 1016717595.225109100341797,
-#   "xtwx_val_file": "data/xtwx_val.bin",
-#   "xtwy_val_file": "data/xtwy_val.bin",
+#   "ytwy_train": 4530536105.428369522094727,       # Get this from extract_problen
+#   "xtwx_train_file": "data/xtwx_train.bin",        # Get this from extract_problen
+#   "xtwy_train_file": "data/xtwy_train.bin",        # Get this from extract_problen
+
+#   "ytwy_val": 1016717595.225109100341797,      # Get this from extract_problen
+#   "xtwx_val_file": "data/xtwx_val.bin",        # Get this from extract_problen
+#   "xtwy_val_file": "data/xtwy_val.bin",        # Get this from extract_problen
 
 #   "out_dir": "out"
 # }

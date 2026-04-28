@@ -190,23 +190,10 @@ void Prune::run()
 #endif
 
     json config;
-    if (rank == 0)
-    {
-        std::ifstream f(config_path_);
-        if (!f.is_open())
-            throw std::runtime_error("Config not found: " + config_path_);
-        config = json::parse(f);
-    }
-
-#ifdef MLIP_MPI
-    std::string config_str = (rank == 0) ? config.dump() : "";
-    int len = static_cast<int>(config_str.size());
-    MPI_Bcast(&len, 1, MPI_INT, 0, MPI_COMM_WORLD);
-    config_str.resize(len);
-    MPI_Bcast(&config_str[0], len, MPI_CHAR, 0, MPI_COMM_WORLD);
-    if (rank != 0)
-        config = json::parse(config_str);
-#endif
+    std::ifstream f(config_path_);
+    if (!f.is_open())
+        throw std::runtime_error("Config not found: " + config_path_);
+    config = json::parse(f);
 
     this->Load(config["mtp_file"].get<std::string>());
 
@@ -279,7 +266,7 @@ void Prune::run()
     int pop_size = config["pop_size"];
     if (pop_size % size != 0)
         pop_size = ((pop_size + size - 1) / size) * size;
-    NSGA2 ga(pop_size, a_sca_cnt, 42 + rank);
+    NSGA2 ga(pop_size, a_sca_cnt, config.value("seed", 42));
 
     int local_count = pop_size / size;
     std::vector<char> local_genes(local_count * a_sca_cnt);

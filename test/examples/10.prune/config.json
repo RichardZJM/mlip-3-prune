@@ -7,6 +7,8 @@
   "regularization": 1e-8,
   "neigh_count": 46.017803,
 
+  "seed": 42,
+
   "ytwy_train": 4530536105.428369522094727,
   "xtwx_train_file": "data/xtwx_train.bin",
   "xtwy_train_file": "data/xtwy_train.bin",
