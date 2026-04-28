@@ -39,8 +39,8 @@ dev_src/alglib/*.o
 *.[ao]
 *.swp
 
-
 bin/*
+build/*
 lib/*
 obj/*
 !README.md

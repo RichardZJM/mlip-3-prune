@@ -1,96 +1,49 @@
 # COMPILATION AND INSTALLATION PROCEDURE
 
 ## QUICK OVERVIEW
+
 MLIP has a serial and parallel version. Building the serial version of MLIP
 requires a modern C++ compiler (supporting c++11), parallel version requires
 an MPI C++ compiler, as well as C and FORTRAN compilers.
 
-The functionally MLIP is independent from other libraries like BLAS or LAPACK.
-MLIP can work without this libraries using only the embedded version of BLAS
-(although you are advised to use the high-performance libraries, e.g.,
-Intel MKL or OpenBLAS).
+This fork of MLIP is **dependent** on BLAS and LAPACK.
+This fork **cannot** work without these libraries. You are highly advised
+to use a high-performance library (Intel MKL or OpenBLAS).
+Other implementations (Netlib) are valid but are much slower.
 
-MLIP build system consists of two step: configuration and compilation.
-The configuration is performed by running:
+This fork now uses CMake to build. This is to better detect BLAS/LAPACK.
+
+Create the build folder.
+
 ```bash
-./configure [OPTIONS]
+mkdir build && cd build
+cmake ..
 ```
 
-Detailed descriptions of configuration options can be viewed by:
+Set the correct configuration options.
+
+Disable MPI support:
+
 ```bash
-./configure --help
+cmake -D USE_MPI=NO ..
+```
+
+Optionally, specify a BLAS vendor. See [options](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors).
+
+```bash
+cmake -DBLA_VENDOR=OpenBLAS ..
 ```
 
 After configuration, the executables can be built with make command:
-```bash
-make <target-name>
-``` 
-
-For information about the build executables, execute
-```bash
-make help
-```
-
-## DETAILED INSTRUCTIONS
-
-1. Configure the MLIP package build
-First, start with executing the configuration script
-```bash
-./configure
-```
-The configuration attempts to set the correct values for various
-system-dependent variables for compilation. The values related to BLAS are
-autodetected in the case if Intel MKL is installed on the system.
-If not, then the "embedded" BLAS (supplied with MLIP) will be used.
-You can force to use the embedded BLAS with the `--blas=embedded` option:
-```bash
-./configure --blas=embedded
-```
-You can also force to use the GNU compiler with the `--compiler=gnu` option:
-```bash
-./configure --compiler=gnu --blas=embedded
-```
-
-By default, the parallel version of the MLIP is compiled. Compilation of serial
-version can be done by specifying the `--no-mpi` option to configure':
-```bash
-./configure --no-mpi
-```
-
-2. Build the MLIP executables
-You can compile and build the MLIP executable by command:
-```bash
-make mlp
-```
-
-3. Install OpenBLAS (optional)
-You may want to download and install the OpenBLAS library:
-```bash
-git clone https://github.com/xianyi/OpenBLAS.git
-make -C OpenBLAS 
-make PREFIX=./ -C OpenBLAS install
-```
-(You, of course, can download it directly from 
-https://github.com/xianyi/OpenBLAS).
-You should then configure MLIP with
-```bash
-./configure --blas=openblas --blas-root=<OpenBLAS path>
-```
-
-## BUILDING MLIP LIBRARY FOR INTERFACES WITH OTHER CODES (E.G. LAMMPS)
 
 ```bash
-make libinterface
+make -j <n>
 ```
-This creates `lib/lib_mlip_interface.a` which should be used when building
-other packages embedding MLIP.
-The interface with MLIP is avaiable
-[here](https://gitlab.com/ivannovikov/interface-lammps-mlip-3)
-under a GNU Public License.
 
-## TESTING THE MLIP BUILD
-The build can be tested by running:
-```bash 
-make test
+The `build/libmlip_interface.a` can be used with the MLIP-LAMMPS interface as usual.
+
+You can run the test suite with:
+
+```bash
+ctest --verbose
 ```
-This launches a number of tests.
