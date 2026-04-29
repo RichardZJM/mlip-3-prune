@@ -40,7 +40,9 @@ After configuration, the executables can be compiled with make command:
 make -j <n>
 ```
 
-The executable will be placed in `bin/libmlip_interface.a`. This is same as the original MLIP-3 package. The `lib/libmlip_interface.a` can be used with the MLIP-3-LAMMPS interface as usual.
+The executable will be placed in `bin/libmlip_interface.a`. This is same as the original MLIP-3 package. The `lib/lib_mlip_interface.a` can be used with the MLIP-3-LAMMPS interface as usual.
+
+It is **not** recommended to interface this fork to LAMMPS due to the BLAS dependency. If you plan to use this fork with the MLIP-3-LAMMPS interface you need to modify the `LAMMPS/Makefile.lammps.template` in the interface code to properly support the BLAS.
 
 You can run the test suite with:
 
@@ -108,24 +110,7 @@ After `make -j 8`, both artefacts land at the top level of the repo
 ctest --verbose                # 43 / 44 tests pass on Apple Silicon (see below)
 ```
 
-Two of the bundled examples are quick end-to-end smoke tests that
-exercise the `mlp` binary against a real potential:
-
-```bash
-( cd test/examples/03.calculate_efs && bash test.sh )   # ~1 s, EFS evaluation
-( cd test/examples/10.prune        && bash test.sh )    # ~30 s, NSGA pruning, n_gen=3
-```
-
-> The reference output at `test/examples/03.calculate_efs/sample_out/`
-> appears to have been generated against a `MultiMTP3` potential, while
-> the bundled `pot.almtp` is `MultiMTP6` — numerical differences from
-> the reference are therefore expected. What matters is that
-> `bash test.sh` completes without errors and writes
-> `out/calculated.cfg.0`. The pruning example should produce
-> `out/pareto_final_objectives.csv` and `out/pareto_final_population.csv`
-> with one row per individual on the final Pareto front.
-
-### Linking against the MLIP-3-LAMMPS interface
+### Linking against the MLIP-3-LAMMPS interface (Not recommended for this fork)
 
 Because this fork drops upstream MLIP-3's embedded CBLAS, downstream
 linkers (e.g. LAMMPS via `interface-lammps-mlip-3`) must explicitly link

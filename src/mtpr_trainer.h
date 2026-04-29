@@ -12,6 +12,9 @@
 #include "mtpr.h"
 #include "common/bfgs.h"
 
+extern "C" void dposv_(const char *uplo, const int *n, const int *nrhs,
+                       double *a, const int *lda, double *b, const int *ldb, int *info);
+
 class MTPR_trainer : public NonLinearRegression
 {
 private:

@@ -60,43 +60,18 @@ void MTPR_trainer::SolveSLAE(int TS_size)
     for (int i = 0; i < n; i++)
         lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
 
-    // Gaussian Elimination with leading row swaps
-    for (int i = 0; i < n - 1; i++)
-    {
-        double &m_ii = lin_matrix[i * n + i];
-        // find row j0 with maximal in modulus element max_el in i-th column
-        int j0 = i;
-        double max_el = m_ii;
-        for (int j = i + 1; j < n; j++)
-        {
-            double foo = fabs(lin_matrix[j * n + i]);
-            if (foo > max_el)
-            {
-                max_el = foo;
-                j0 = j;
-            }
-        }
+    // Solve SLAE with LAPACK Cholesky Solver (dposv)
+    char uplo = 'U';
+    int nrhs = 1;
+    int info = 0;
 
-        // Gaussian elimination
-        for (int j = i + 1; j < n; j++)
-        {
-            double ratio = lin_matrix[j * n + i] / m_ii;
-            for (int k = i; k < n; k++)
-                lin_matrix[j * n + k] -= ratio * lin_matrix[i * n + k];
-            lin_vector[j] -= ratio * lin_vector[i];
-        }
-    }
+    // lin_matrix is symmetric so row-major layout perfectly maps to column-major lapack expectations.
+    dposv_(&uplo, &n, &nrhs, lin_matrix.data(), &n, lin_vector.data(), &n, &info);
 
-    // solving the SLAE
-    p_mlmtpr->linear_coeffs(n - 1) = lin_vector[n - 1] / lin_matrix[(n - 1) * n + (n - 1)];
-    for (int i = (n - 2); i >= 0; i--)
+    // populate linear_coeffs with the solved vector
+    for (int i = 0; i < n; i++)
     {
-        double temp = lin_vector[i];
-        for (int j = (i + 1); j < n; j++)
-        {
-            temp -= (lin_matrix[i * n + j] * p_mlmtpr->linear_coeffs(j));
-        }
-        p_mlmtpr->linear_coeffs(i) = temp / lin_matrix[i * n + i];
+        p_mlmtpr->linear_coeffs(i) = lin_vector[i];
     }
 }
 

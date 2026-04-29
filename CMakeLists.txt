@@ -37,6 +37,7 @@ file(GLOB_RECURSE LIB_SOURCES
 list(FILTER LIB_SOURCES EXCLUDE REGEX ".*/src/mlp/mlp\\.cpp$")
 
 add_library(mlip_interface STATIC ${LIB_SOURCES})
+set_target_properties(mlip_interface PROPERTIES PREFIX "lib_")
 
 target_include_directories(mlip_interface PUBLIC src)
 target_compile_features(mlip_interface PUBLIC cxx_std_11)
@@ -57,7 +58,7 @@ endif()
 
 add_custom_command(TARGET mlip_interface POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mlip_interface> ${CMAKE_SOURCE_DIR}/lib/
-    COMMAND ${CMAKE_COMMAND} -E echo "-- Library: ${CMAKE_SOURCE_DIR}/lib/libmlip_interface.a"
+    COMMAND ${CMAKE_COMMAND} -E echo "-- Library: ${CMAKE_SOURCE_DIR}/lib/lib_mlip_interface.a"
     VERBATIM
 )
 
@@ -65,7 +66,6 @@ add_executable(mlp src/mlp/mlp.cpp)
 
 target_link_libraries(mlp PRIVATE mlip_interface)
 
-# Fix for Build Error: Combined POST_BUILD with VERBATIM to handle shell paths correctly
 add_custom_command(TARGET mlp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mlp> ${CMAKE_SOURCE_DIR}/bin/
     COMMAND ${CMAKE_COMMAND} -E echo "-- Binary:  ${CMAKE_SOURCE_DIR}/bin/mlp"
@@ -91,7 +91,7 @@ endif()
 enable_testing()
 
 set_property(TARGET mlip_interface APPEND PROPERTY
-    ADDITIONAL_CLEAN_FILES ${CMAKE_SOURCE_DIR}/lib/libmlip_interface.a
+    ADDITIONAL_CLEAN_FILES ${CMAKE_SOURCE_DIR}/lib/lib_mlip_interface.a
 )
 set_property(TARGET mlp APPEND PROPERTY
     ADDITIONAL_CLEAN_FILES ${CMAKE_SOURCE_DIR}/bin/mlp
