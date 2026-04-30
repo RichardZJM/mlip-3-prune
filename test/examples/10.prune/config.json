@@ -8,6 +8,7 @@
   "neigh_count": 46.017803,
 
   "seed": 42,
+  "max_fill": 20,
 
   "ytwy_train": 4530536105.428369522094727,
   "xtwx_train_file": "data/xtwx_train.bin",

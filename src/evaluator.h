@@ -1,6 +1,5 @@
 #pragma once
 #include <vector>
-#include <queue>
 
 extern "C" void dposv_(const char *uplo, const int *n, const int *nrhs,
                        double *a, const int *lda, double *b, const int *ldb, int *info);
@@ -44,10 +43,10 @@ class CostCalculator
     // Pre-allocated buffers (using char to avoid vector<bool> overhead)
     mutable std::vector<char> mus_flags_buf;
     mutable std::vector<char> to_preserve_buf;
-    mutable std::queue<int> q_buf;
+    mutable std::vector<int> q_buf;
 
 public:
     CostCalculator(int num_moments_, const std::vector<int> &basic_, const std::vector<int> &times_,
                    const std::vector<int> &scalar_, double neigh_count, int radial, int rank);
-    double canonicalize_and_calculate(char *genes, int n_var) const;
+    double canonicalize_and_calculate(char *genes, int n_var, int max_fill_rounds = 1);
 };

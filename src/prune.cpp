@@ -119,7 +119,7 @@ namespace
                              CostCalculator &cost_calc, SSECalculator &sse_calc,
                              std::vector<char> &genes, std::vector<double> &cost_sse,
                              std::vector<char> &local_genes, std::vector<double> &local_results,
-                             double &eval_time, double &mpi_time, double &gather_time)
+                             double &eval_time, double &mpi_time, double &gather_time, int max_fill)
     {
         if (count == 0)
             return;
@@ -133,7 +133,7 @@ namespace
         double start_eval = MPI_Wtime();
         for (int i = 0; i < local_count; ++i)
         {
-            local_results[i * 2] = cost_calc.canonicalize_and_calculate(local_genes.data() + i * n_var, n_var);
+            local_results[i * 2] = cost_calc.canonicalize_and_calculate(local_genes.data() + i * n_var, n_var, max_fill);
             local_results[i * 2 + 1] = sse_calc.calculate(local_genes.data() + i * n_var);
         }
         eval_time += (MPI_Wtime() - start_eval);
@@ -146,7 +146,7 @@ namespace
         auto start_eval = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < count; ++i)
         {
-            cost_sse[(offset + i) * 2] = cost_calc.canonicalize_and_calculate(genes.data() + (offset + i) * n_var, n_var);
+            cost_sse[(offset + i) * 2] = cost_calc.canonicalize_and_calculate(genes.data() + (offset + i) * n_var, n_var, max_fill);
             cost_sse[(offset + i) * 2 + 1] = sse_calc.calculate(genes.data() + (offset + i) * n_var);
         }
         eval_time += std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_eval).count();
@@ -294,7 +294,7 @@ void Prune::run()
         return std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - start_time).count();
     };
 
-    evaluate_population(0, pop_size, a_sca_cnt, rank, size, cost_calc, sse_calc, ga.genes, ga.cost_sse, local_genes, local_results, eval_time, mpi_time, gather_time);
+    evaluate_population(0, pop_size, a_sca_cnt, rank, size, cost_calc, sse_calc, ga.genes, ga.cost_sse, local_genes, local_results, eval_time, mpi_time, gather_time, config.value("max_fill", 1));
 
     int n_gen = config["n_gen"];
     if (rank == 0)
@@ -311,7 +311,7 @@ void Prune::run()
     {
         if (rank == 0)
             ga.generate_offspring();
-        evaluate_population(pop_size, pop_size, a_sca_cnt, rank, size, cost_calc, sse_calc, ga.genes, ga.cost_sse, local_genes, local_results, eval_time, mpi_time, gather_time);
+        evaluate_population(pop_size, pop_size, a_sca_cnt, rank, size, cost_calc, sse_calc, ga.genes, ga.cost_sse, local_genes, local_results, eval_time, mpi_time, gather_time, config.value("max_fill", 1));
 
         int stop = 0;
         if (rank == 0)

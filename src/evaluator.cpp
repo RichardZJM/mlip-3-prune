@@ -200,14 +200,14 @@ CostCalculator::CostCalculator(int num_moments_, const std::vector<int> &basic_,
     }
 }
 
-double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
+double CostCalculator::canonicalize_and_calculate(char *genes, int n_var, int max_fill_rounds)
 {
     std::fill(mus_flags_buf.begin(), mus_flags_buf.end(), 0);
     std::fill(to_preserve_buf.begin(), to_preserve_buf.end(), 0);
 
-    while (!q_buf.empty())
-        q_buf.pop();
-
+    // BFS to find all moments needed by active scalars
+    int head = 0;
+    q_buf.clear();
     for (int i = 0; i < n_var; ++i)
     {
         if (genes[i])
@@ -216,34 +216,32 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
             if (!to_preserve_buf[m])
             {
                 to_preserve_buf[m] = 1;
-                q_buf.push(m);
+                q_buf.push_back(m);
             }
         }
     }
-
-    while (!q_buf.empty())
+    while (head < (int)q_buf.size())
     {
-        int child = q_buf.front();
-        q_buf.pop();
+        int child = q_buf[head++];
         for (int j = parents_idx[child]; j < parents_idx[child + 1]; j += 2)
         {
             int p1 = parents_data[j], p2 = parents_data[j + 1];
             if (!to_preserve_buf[p1])
             {
                 to_preserve_buf[p1] = 1;
-                q_buf.push(p1);
+                q_buf.push_back(p1);
             }
             if (!to_preserve_buf[p2])
             {
                 to_preserve_buf[p2] = 1;
-                q_buf.push(p2);
+                q_buf.push_back(p2);
             }
         }
     }
 
+    // Compute raw cost
     int ntimes = 0, nbasic = 0;
     int current_max_active_rank = -1;
-
     for (int i = 0; i < num_moments; ++i)
     {
         if (to_preserve_buf[i])
@@ -277,19 +275,18 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
     for (int i = 0; i < n_var; ++i)
     {
         if (to_preserve_buf[scalar_indices[i]])
-        {
             genes[i] = 1;
-        }
     }
 
-    // 2. FAST FILL RULE
-    double max_incremental_cost = 0.10 * raw_cost;
+    // 2. FAST FILL RULE - BFS levels
     double total_cost = raw_cost;
+    double max_incremental_cost = 0.10 * raw_cost;
 
-    bool changed = true;
-    while (changed)
+    for (int round = 0; round < max_fill_rounds; ++round)
     {
-        changed = false;
+        bool any_flipped = false;
+        q_buf.clear();
+
         for (int i = 0; i < n_var; ++i)
         {
             if (!genes[i])
@@ -308,46 +305,32 @@ double CostCalculator::canonicalize_and_calculate(char *genes, int n_var) const
 
                 if (deps_met)
                 {
-                    double incremental_cost = 0;
                     int edges = (parents_idx[m + 1] - parents_idx[m]) / 2;
-
-                    if (edges > 0)
-                    {
-                        incremental_cost = 9 * edges;
-                    }
-                    else
-                    {
-                        incremental_cost = neigh_count * 39;
-                        int mu = basic_indices[m * 4];
-                        int r = std::max({basic_indices[m * 4 + 1], basic_indices[m * 4 + 2], basic_indices[m * 4 + 3]});
-
-                        if (mu < n_mus && !mus_flags_buf[mu])
-                            incremental_cost += neigh_count * 4 * radial_basis_size;
-
-                        if (r > current_max_active_rank)
-                            incremental_cost += neigh_count * 4 * (r - current_max_active_rank);
-                    }
+                    if (edges == 0)
+                        continue;
+                    double incremental_cost = 9 * edges;
 
                     if (incremental_cost <= max_incremental_cost)
                     {
-                        genes[i] = 1;
-                        to_preserve_buf[m] = 1;
-
-                        if (edges == 0)
-                        {
-                            int mu = basic_indices[m * 4];
-                            int r = std::max({basic_indices[m * 4 + 1], basic_indices[m * 4 + 2], basic_indices[m * 4 + 3]});
-                            if (mu < n_mus)
-                                mus_flags_buf[mu] = 1;
-                            if (r > current_max_active_rank)
-                                current_max_active_rank = r;
-                        }
-                        changed = true;
+                        genes[i] = 1; // Immediate update is safe here (only read by `if (!genes[i])`)
                         total_cost += incremental_cost;
+                        any_flipped = true;
+
+                        // Defer updating to_preserve_buf to maintain level-synchronous BFS
+                        q_buf.push_back(m);
                     }
                 }
             }
         }
+
+        // Apply the wave's updates all at once
+        for (int m : q_buf)
+        {
+            to_preserve_buf[m] = 1;
+        }
+
+        if (!any_flipped)
+            break;
     }
 
     return total_cost / base_cost;
