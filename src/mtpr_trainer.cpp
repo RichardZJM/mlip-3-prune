@@ -8,6 +8,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cstring>
+#include <cmath>
+#include <map>
 
 using namespace std;
 
@@ -41,9 +43,9 @@ void MTPR_trainer::SolveSLAE(int TS_size)
 
     int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count; // Matrix size
 
-    if (!reg_init)                  // checking the condition of changing the regularization
-        for (int i = 0; i < n; i++) // TODO: why __max, not std::max?
-            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size) || (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size))
+    if (!reg_init) // checking the condition of changing the regularization
+        for (int i = 0; i < n; i++)
+            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) || (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
             {
                 reg_init = true;
                 logstrm1 << "Regularization parameters updated. Hessian in BFGS is reset" << endl;
@@ -54,11 +56,13 @@ void MTPR_trainer::SolveSLAE(int TS_size)
 
     if (reg_init) // if we need to change the regularization
         for (int i = 0; i < n; i++)
-            p_mlmtpr->reg_vector[i] = reg_param * __max(1, lin_matrix[i * n + i]) / TS_size; // assigning a regularization proportional to the matrix element size
+            p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size; // assigning a regularization proportional to the matrix element size
 
     // Regularization
     for (int i = 0; i < n; i++)
         lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
+
+    lin_matrix_reg = lin_matrix; // Capture a copy before LAPACK destructively overwrites it
 
     // Solve SLAE with LAPACK Cholesky Solver (dposv)
     char uplo = 'U';
@@ -74,23 +78,20 @@ void MTPR_trainer::SolveSLAE(int TS_size)
         p_mlmtpr->linear_coeffs(i) = lin_vector[i];
     }
 }
-
 // TODO: remove weight?
 void MTPR_trainer::AddToSLAE(Configuration &cfg, double weight)
 {
     if (cfg.nbh_cutoff != p_mlip->CutOff())
         cfg.InitNbhs(p_mlip->CutOff());
 
-    if (cfg.nbhs.size() == 0) // ignore empty configurations
+    if (cfg.nbhs.size() == 0)
         return;
 
-    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count; // Matrix size
+    int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
 
-    p_mlmtpr->CalcEFSComponents(cfg); // calculate the values necessary for the SLAE formation
+    p_mlmtpr->CalcEFSComponents(cfg);
 
-    logstrm1.precision(8);
-
-    int fn = norm_by_forces; // this makes the weights of different forces different (if fn==1)
+    int fn = norm_by_forces;
     double d = 0.1;
     double avef = 0;
 
@@ -98,59 +99,103 @@ void MTPR_trainer::AddToSLAE(Configuration &cfg, double weight)
         for (int ind = 0; ind < cfg.nbhs.size(); ind++)
             avef += cfg.force(ind).NormSq() / cfg.nbhs.size();
 
+    char uplo_L = 'L';
+    char trans_N = 'N';
+    double beta_1 = 1.0;
+    int inc1 = 1;
+
+    // --- ENERGIES (Unchanged from before) ---
     if (cfg.has_energy())
     {
-        for (int i = 0; i < n; i++)
-            for (int j = i; j < n; j++)
-                lin_matrix[i * n + j] += weight * wgt_energy(cfg) * p_mlmtpr->energy_cmpnts[i] * p_mlmtpr->energy_cmpnts[j] * d / (d + fn * avef);
-
-        for (int i = 0; i < n; i++)
-            lin_vector[i] += weight * wgt_energy(cfg) * p_mlmtpr->energy_cmpnts[i] * cfg.energy * d / (d + fn * avef);
-
-        lin_scalar += weight * wgt_energy(cfg) * cfg.energy * cfg.energy * d / (d + fn * avef);
-
-        lin_eqn_count += (weight > 0) ? 1 : ((weight < 0) ? -1 : 0);
-    }
-
-    if ((wgt_eqtn_forces > 0) && (cfg.has_forces()))
-    {
-        for (int i = 0; i < n; i++)
-            for (int j = i; j < n; j++)
-                for (int ind = 0; ind < cfg.nbhs.size(); ind++)
-                    for (int a = 0; a < 3; a++)
-                        lin_matrix[i * n + j] += weight * wgt_forces(cfg, ind, a) * p_mlmtpr->forces_cmpnts(cfg.nbhs[ind].my_ind, i, a) * p_mlmtpr->forces_cmpnts(cfg.nbhs[ind].my_ind, j, a) * d / (d + fn * avef);
-
-        for (int ind = 0; ind < cfg.size(); ind++)
+        double alpha_e = weight * wgt_energy(cfg) * d / (d + fn * avef);
+        if (alpha_e != 0.0)
         {
+            dsyr_(&uplo_L, &n, &alpha_e, p_mlmtpr->energy_cmpnts.data(), &inc1, lin_matrix.data(), &n);
+
+            double alpha_vec = alpha_e * cfg.energy;
             for (int i = 0; i < n; i++)
-                for (int a = 0; a < 3; a++)
-                    lin_vector[i] += weight * wgt_forces(cfg, ind, a) * p_mlmtpr->forces_cmpnts(cfg.nbhs[ind].my_ind, i, a) * cfg.force(cfg.nbhs[ind].my_ind, a) * d / (d + fn * avef);
+                lin_vector[i] += alpha_vec * p_mlmtpr->energy_cmpnts[i];
 
-            for (int a = 0; a < 3; a++)
-                lin_scalar += weight * wgt_forces(cfg, ind, a) * cfg.force(ind, a) * cfg.force(ind, a) * d / (d + fn * avef);
-
-            lin_eqn_count += 3 * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
+            lin_scalar += alpha_vec * cfg.energy;
+            lin_eqn_count += (weight > 0) ? 1 : ((weight < 0) ? -1 : 0);
         }
     }
 
+    // --- FORCES (Zero-copy DSYRK) ---
+    if ((wgt_eqtn_forces > 0) && (cfg.has_forces()))
+    {
+        double alpha_f = weight * d / (d + fn * avef);
+        if (alpha_f != 0.0)
+        {
+            int K_f = cfg.nbhs.size() * 3;
+            if (K_f > 0)
+            {
+                double *F_ptr = p_mlmtpr->forces_cmpnts.data();
+                int offset = 0;
+
+                for (int ind = 0; ind < cfg.nbhs.size(); ind++)
+                {
+                    int my_ind = cfg.nbhs[ind].my_ind;
+                    for (int a = 0; a < 3; a++)
+                    {
+                        double w = wgt_forces(cfg, ind, a);
+                        double f_val = cfg.force(my_ind, a);
+                        double alpha_vec = alpha_f * w * f_val;
+                        double sqrt_w = std::sqrt(std::max(0.0, w));
+
+                        // We do 2 jobs at once: Add to lin_vector, and scale F_ptr in-place for DSYRK
+                        for (int i = 0; i < n; i++)
+                        {
+                            lin_vector[i] += alpha_vec * F_ptr[offset + i];
+                            F_ptr[offset + i] *= sqrt_w;
+                        }
+
+                        lin_scalar += alpha_vec * f_val;
+                        offset += n;
+                    }
+                    lin_eqn_count += 3 * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
+                }
+
+                // Fire BLAS natively against our contiguous columns!
+                dsyrk_(&uplo_L, &trans_N, &n, &K_f, &alpha_f, F_ptr, &n, &beta_1, lin_matrix.data(), &n);
+            }
+        }
+    }
+
+    // --- STRESSES (Zero-copy DSYRK) ---
     if ((wgt_eqtn_stress > 0) && (cfg.has_stresses()))
     {
-        for (int i = 0; i < n; i++)
-            for (int j = i; j < n; j++)
-                for (int a = 0; a < 3; a++)
-                    for (int b = 0; b < 3; b++)
-                        lin_matrix[i * n + j] += weight * wgt_stress(cfg, a, b) * p_mlmtpr->stress_cmpnts(i, a, b) * p_mlmtpr->stress_cmpnts(j, a, b);
+        double alpha_s = weight;
+        if (alpha_s != 0.0)
+        {
+            int K_s = 9;
+            double *S_ptr = p_mlmtpr->stress_cmpnts.data();
+            int offset = 0;
 
-        for (int i = 0; i < n; i++)
             for (int a = 0; a < 3; a++)
+            {
                 for (int b = 0; b < 3; b++)
-                    lin_vector[i] += weight * wgt_stress(cfg, a, b) * p_mlmtpr->stress_cmpnts(i, a, b) * cfg.stresses[a][b];
+                {
+                    double w = wgt_stress(cfg, a, b);
+                    double s_val = cfg.stresses[a][b];
+                    double alpha_vec = alpha_s * w * s_val;
+                    double sqrt_w = std::sqrt(std::max(0.0, w));
 
-        for (int a = 0; a < 3; a++)
-            for (int b = 0; b < 3; b++)
-                lin_scalar += weight * wgt_stress(cfg, a, b) * cfg.stresses[a][b] * cfg.stresses[a][b];
+                    for (int i = 0; i < n; i++)
+                    {
+                        lin_vector[i] += alpha_vec * S_ptr[offset + i];
+                        S_ptr[offset + i] *= sqrt_w;
+                    }
 
-        lin_eqn_count += 6 * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
+                    lin_scalar += alpha_vec * s_val;
+                    offset += n;
+                }
+            }
+            lin_eqn_count += 6 * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
+
+            // Fire BLAS natively
+            dsyrk_(&uplo_L, &trans_N, &n, &K_s, &alpha_s, S_ptr, &n, &beta_1, lin_matrix.data(), &n);
+        }
     }
 }
 
@@ -629,93 +674,136 @@ void MTPR_trainer::NonLinOptimize(std::vector<Configuration> &training_set, int 
         logstrm1.str("");
     }
 }
+
 void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
 {
+    int n = p_mlmtpr->LinSize();
+    std::vector<int> deg = p_mlmtpr->GetScalingDegrees();
 
-    double min_scaling = p_mlmtpr->scaling; //
-    double max_scaling = p_mlmtpr->scaling; //
-    int ind;
-    do
+#ifdef MLIP_MPI
+    if (mpi.rank == 0)
     {
-        double condition_number[5];
-        double scaling = p_mlmtpr->scaling;
-        double scalings[5] = {scaling / 1.2, scaling / 1.1, scaling, scaling * 1.1, scaling * 1.2}; // checking 5 different scaling numbers
-        vector<double> coeffs;
-        coeffs.resize(p_mlmtpr->LinSize());
-#ifdef MLIP_MPI
-        if (mpi.rank == 0)
+        logstrm1 << "Rescaling...\n";
+        MLP_LOG("fit", logstrm1.str());
+        logstrm1.str("");
+    }
+#else
+    logstrm1 << "Rescaling...\n";
+    MLP_LOG("fit", logstrm1.str());
+    logstrm1.str("");
 #endif
+
+    // Populates lin_matrix (Cholesky U) and lin_matrix_reg (pre-factor A) on rank 0 only
+    LinOptimize(training_set);
+
+    double best_r = 1.0;
+
+#ifdef MLIP_MPI
+    if (mpi.rank == 0)
+#endif
+    {
+        auto estimate_cond = [&](double r) -> double
         {
-            logstrm1 << "Rescaling...\n";
+            std::vector<double> U_scaled(n * n, 0.0);
+            std::vector<double> D(n);
+            for (int i = 0; i < n; i++)
+                D[i] = std::pow(r, deg[i]);
+
+            double anorm = 0.0;
+            for (int c = 0; c < n; c++)
+            {
+                double col_sum = 0.0;
+                for (int row = 0; row < n; row++)
+                    col_sum += std::abs(lin_matrix_reg[row * n + c]) * D[row] * D[c];
+                if (col_sum > anorm)
+                    anorm = col_sum;
+            }
+
+            for (int c = 0; c < n; c++)
+                for (int row = 0; row <= c; row++)
+                    U_scaled[row + c * n] = lin_matrix[row + c * n] * D[c];
+
+            char uplo = 'U';
+            double rcond = 0.0;
+            std::vector<double> work(3 * n);
+            std::vector<int> iwork(n);
+            int info = 0;
+            dpocon_(&uplo, &n, U_scaled.data(), &n, &anorm, &rcond, work.data(), iwork.data(), &info);
+
+            return (rcond == 0.0) ? 1e99 : 1.0 / rcond;
+        };
+
+        std::map<long long, double> cache;
+        auto get_cond = [&](double r) -> double
+        {
+            long long key = std::round(std::log(r) * 1e8);
+            auto it = cache.find(key);
+            if (it != cache.end())
+                return it->second;
+
+            double c = estimate_cond(r);
+            cache[key] = c;
+
+            logstrm1 << "   scaling = " << (p_mlmtpr->scaling * r)
+                     << ", condition number = " << c << "\n";
             MLP_LOG("fit", logstrm1.str());
             logstrm1.str("");
-        }
-        for (int j = 0; j < 5; j++)
+
+            return c;
+        };
+
+        double min_cond = get_cond(best_r);
+
+        std::vector<double> zoom_levels = {2.0, 1.5, 1.2, 1.1, 1.05, 1.01, 1.005, 1.001};
+
+        for (double step : zoom_levels)
         {
-#ifdef MLIP_MPI
-            if (mpi.rank == 0)
-#endif
+            bool improved;
+            do
             {
-                logstrm1 << "   scaling = " << scalings[j] << ", condition number = ";
-                MLP_LOG("fit", logstrm1.str());
-                logstrm1.str("");
-            }
-            p_mlmtpr->scaling = scalings[j];
-            LinOptimize(training_set);
-            double rms = 0;
+                improved = false;
+                double local_best_r = best_r;
+                double local_min_cond = min_cond;
 
-            for (int i = 0; i < p_mlmtpr->LinSize(); i++)
-            {
-                coeffs[i] = std::abs(p_mlmtpr->linear_coeffs(i));
-                rms += coeffs[i] * coeffs[i];
-            }
-            rms = sqrt(rms);
-            std::sort(coeffs.begin(), coeffs.end());
-            double median = coeffs[coeffs.size() / 2];
-            condition_number[j] = rms / median;
-#ifdef MLIP_MPI
-            if (mpi.rank == 0)
-#endif
-            {
-                logstrm1 << rms / median << "\n";
-                MLP_LOG("fit", logstrm1.str());
-                logstrm1.str("");
-            }
+                for (int i = -5; i <= 5; i++)
+                {
+                    if (i == 0)
+                        continue;
+
+                    double r = best_r * std::pow(step, i);
+                    double c = get_cond(r);
+
+                    if (c < local_min_cond)
+                    {
+                        local_min_cond = c;
+                        local_best_r = r;
+                    }
+                }
+
+                if (local_min_cond < min_cond)
+                {
+                    min_cond = local_min_cond;
+                    best_r = local_best_r;
+                    improved = true;
+                }
+            } while (improved);
         }
 
-        // finds minimal condition number
-        ind = 2;
-        for (int j = 0; j < 5; j++)
-            if (condition_number[j] < condition_number[ind])
-                ind = j;
+        p_mlmtpr->scaling *= best_r;
 
-        p_mlmtpr->scaling = scalings[ind];
+        logstrm1 << "Rescaling to " << p_mlmtpr->scaling << "... done\n";
+        MLP_LOG("fit", logstrm1.str());
+        logstrm1.str("");
+    }
+
 #ifdef MLIP_MPI
-        if (mpi.rank == 0)
+    // Broadcast the updated scaling to all ranks before the final solve
+    MPI_Bcast(&p_mlmtpr->scaling, 1, MPI_DOUBLE, 0, mpi.comm);
+    MPI_Bcast(&best_r, 1, MPI_DOUBLE, 0, mpi.comm);
 #endif
-        {
-            logstrm1 << "Rescaling to " << p_mlmtpr->scaling << "... ";
-            MLP_LOG("fit", logstrm1.str());
-            logstrm1.str("");
-        }
+
+    if (best_r != 1.0)
         LinOptimize(training_set);
-#ifdef MLIP_MPI
-        if (mpi.rank == 0)
-#endif
-        {
-            logstrm1 << "done" << std::endl;
-            MLP_LOG("fit", logstrm1.str());
-            logstrm1.str("");
-        }
-        // TODO: comment this part. I do not fully understand the logic of this criterion
-        if ((min_scaling < p_mlmtpr->scaling) && (p_mlmtpr->scaling < max_scaling))
-            ind = 2;
-        else
-        {
-            min_scaling = std::min(min_scaling, p_mlmtpr->scaling);
-            max_scaling = std::max(max_scaling, p_mlmtpr->scaling);
-        }
-    } while (ind != 2);
 }
 
 void MTPR_trainer::Train(std::vector<Configuration> &training_set)

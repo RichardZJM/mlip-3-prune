@@ -685,7 +685,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         }
 
 #ifdef MLIP_MPI
-        vector<Configuration> training_set = MPI_LoadCfgs(args[1]);
+        vector<Configuration> training_set = MPI_LoadBalanceCfgs(args[1]);
 #else
         vector<Configuration> training_set = LoadCfgs(args[1]);
 #endif

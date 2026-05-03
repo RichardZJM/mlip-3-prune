@@ -13,6 +13,28 @@
 #include "multidimensional_arrays.h"
 #include "utils.h"
 
+extern "C"
+{
+    double ddot_(const int *n, const double *x, const int *incx,
+                 const double *y, const int *incy);
+    void dcopy_(const int *n, const double *x, const int *incx,
+                double *y, const int *incy);
+    void dscal_(const int *n, const double *alpha, double *x, const int *incx);
+    void daxpy_(const int *n, const double *alpha,
+                const double *x, const int *incx,
+                double *y, const int *incy);
+    // inv_hess is row-major. Row-major upper == column-major lower, so pass 'L'.
+    void dsymv_(const char *uplo, const int *n,
+                const double *alpha, const double *a, const int *lda,
+                const double *x, const int *incx,
+                const double *beta, double *y, const int *incy);
+    void dsyr_(const char *uplo, const int *n, const double *alpha,
+               const double *x, const int *incx, double *a, const int *lda);
+    void dsyr2_(const char *uplo, const int *n, const double *alpha,
+                const double *x, const int *incx,
+                const double *y, const int *incy,
+                double *a, const int *lda);
+}
 
 //! Linesearch
 
@@ -41,9 +63,9 @@ protected:
     double prev_g;
 
 public:
-
     //! resets linesearch for minimizing another function.
-    void Reset(double _initial_step = 1.0) {
+    void Reset(double _initial_step = 1.0)
+    {
         left_x = curr_x = 0.0;
         right_x = _initial_step;
         right_f = HUGE_DOUBLE;
@@ -54,13 +76,16 @@ public:
 
     double x() { return curr_x; }
 
-    void ReduceStep(double ratio = 0.25) {
+    void ReduceStep(double ratio = 0.25)
+    {
         curr_x = prev_x + ratio * (curr_x - prev_x);
     }
 
     //! make an iteration, sets new x()
-    bool Iterate(double curr_f, double curr_g) {
-        if (curr_x == 0) {
+    bool Iterate(double curr_f, double curr_g)
+    {
+        if (curr_x == 0)
+        {
             // this is the very first iteration
             left_x = curr_x;
             left_f = curr_f;
@@ -72,40 +97,41 @@ public:
 
             curr_x = right_x;
 
-			if (curr_g > 0)
-			{
-				Warning("Linesearch with increasing funcion!");
-				return false;
-			}
+            if (curr_g > 0)
+            {
+                Warning("Linesearch with increasing funcion!");
+                return false;
+            }
 
             return true;
         }
 #ifdef MLIP_LINESEARCH_DEBUG
         std::cerr.precision(16);
         std::cerr << "ls dump: {"
-            << left_x << ", "
-            << curr_x << ", "
-            << right_x << ", "
-            << left_f << ", "
-            << curr_f << ", "
-            << right_f << ", "
-            << left_g << ", "
-            << curr_g << ", "
-            << right_g << ", "
-            << prev_x << ", "
-            << prev_f << ", "
-            << prev_g << "}" 
-            << std::endl;
+                  << left_x << ", "
+                  << curr_x << ", "
+                  << right_x << ", "
+                  << left_f << ", "
+                  << curr_f << ", "
+                  << right_f << ", "
+                  << left_g << ", "
+                  << curr_g << ", "
+                  << right_g << ", "
+                  << prev_x << ", "
+                  << prev_f << ", "
+                  << prev_g << "}"
+                  << std::endl;
 #endif // MLIP_LINESEARCH_DEBUG
 
         // Now prev_x, prev_f, prev_g are set
-		if (prev_x == curr_x)
-		{
-			Warning("prev_x == curr_x");
-			return false;
-		}
+        if (prev_x == curr_x)
+        {
+            Warning("prev_x == curr_x");
+            return false;
+        }
 
-        if (curr_x == right_x || (curr_x > left_x && right_f == 9e99)) {
+        if (curr_x == right_x || (curr_x > left_x && right_f == 9e99))
+        {
             right_x = curr_x;
             right_f = curr_f;
             right_g = curr_g;
@@ -113,8 +139,10 @@ public:
         // right_... are already set here
 
         // update left_ and right_
-        if (right_g < 0 && right_f < left_f) {
-            if (curr_x > right_x) {
+        if (right_g < 0 && right_f < left_f)
+        {
+            if (curr_x > right_x)
+            {
                 left_x = right_x;
                 left_f = right_f;
                 left_g = right_g;
@@ -122,34 +150,52 @@ public:
                 right_f = curr_f;
                 right_g = curr_g;
             }
-        } else {
+        }
+        else
+        {
 
             // update left_x
-            if (curr_g < 0 && curr_f < left_f && curr_x > left_x) {
-                if (curr_x > right_x) {
-                    if (curr_f > right_f) {
-                        prev_x = curr_x; prev_f = curr_f; prev_g = curr_g;
-                        left_x = right_x; left_f = right_f; left_g = right_g;
-                        right_x = curr_x; right_f = curr_f; right_g = curr_g;
+            if (curr_g < 0 && curr_f < left_f && curr_x > left_x)
+            {
+                if (curr_x > right_x)
+                {
+                    if (curr_f > right_f)
+                    {
+                        prev_x = curr_x;
+                        prev_f = curr_f;
+                        prev_g = curr_g;
+                        left_x = right_x;
+                        left_f = right_f;
+                        left_g = right_g;
+                        right_x = curr_x;
+                        right_f = curr_f;
+                        right_g = curr_g;
                         curr_x = 0.5 * (left_x + right_x);
                         return true;
                     }
-                    right_x = curr_x; right_f = curr_f; right_g = curr_g;
+                    right_x = curr_x;
+                    right_f = curr_f;
+                    right_g = curr_g;
                 }
-                else {
-                    left_x = curr_x; left_f = curr_f; left_g = curr_g;
+                else
+                {
+                    left_x = curr_x;
+                    left_f = curr_f;
+                    left_g = curr_g;
                 }
             }
 
             // update right_x
-            if (curr_g > 0 && curr_x < right_x) {
+            if (curr_g > 0 && curr_x < right_x)
+            {
                 right_x = curr_x;
                 right_f = curr_f;
                 right_g = curr_g;
             }
         }
         // check weak Wolfe conditions
-        if (curr_f > left_f + 0.1 * left_g * (curr_x - left_x)) {
+        if (curr_f > left_f + 0.1 * left_g * (curr_x - left_x))
+        {
             // a robust iteration: we reconstruct log(f - delta_f) with a parabola
             // with left_f, left_g, curr_f
 
@@ -158,13 +204,15 @@ public:
             double g0 = left_g / slope;
             double f1 = std::log(curr_f - left_f + slope);
 
-            double next_x = left_x - 0.5 * g0 * (curr_x - left_x) * (curr_x - left_x)
-                / (f1 - f0 - g0 * (curr_x - left_x));
+            double next_x = left_x - 0.5 * g0 * (curr_x - left_x) * (curr_x - left_x) / (f1 - f0 - g0 * (curr_x - left_x));
 
-            if (next_x > right_x && right_g > 0) {
+            if (next_x > right_x && right_g > 0)
+            {
                 // super robust here: dihotomy
                 next_x = left_x + 0.5 * (curr_x - left_x);
-            } else if ((next_x - left_x > 3.0 * right_x - 2.0 * left_x) && right_g < 0) {
+            }
+            else if ((next_x - left_x > 3.0 * right_x - 2.0 * left_x) && right_g < 0)
+            {
                 // expand the right boundary, but not too much
                 next_x = left_x + 3.0 * (right_x - left_x);
             }
@@ -177,46 +225,63 @@ public:
             std::cerr << std::endl;
 #endif // MLIP_LINESEARCH_DEBUG
 
-            prev_x = curr_x; prev_f = curr_f; prev_g = curr_g;
+            prev_x = curr_x;
+            prev_f = curr_f;
+            prev_g = curr_g;
             curr_x = next_x;
             return true;
         }
 
-        if ((curr_g - prev_g) / (curr_x - prev_x) < 0.0) {
+        if ((curr_g - prev_g) / (curr_x - prev_x) < 0.0)
+        {
             // second derivative < 0, careful here
-            if (right_g < 0) {
-                prev_x = curr_x; prev_f = curr_f; prev_g = curr_g;
+            if (right_g < 0)
+            {
+                prev_x = curr_x;
+                prev_f = curr_f;
+                prev_g = curr_g;
                 curr_x = 3 * right_x - 2 * left_x;
                 return true;
             }
             // Now right_g < 0
-            prev_x = curr_x; prev_f = curr_f; prev_g = curr_g;
-            curr_x += 0.5*(right_x - curr_x);
+            prev_x = curr_x;
+            prev_f = curr_f;
+            prev_g = curr_g;
+            curr_x += 0.5 * (right_x - curr_x);
             return true;
         }
 
         // we can now do a secant method
         double new_x = curr_x - curr_g * (curr_x - prev_x) / (curr_g - prev_g);
-        prev_x = curr_x; prev_f = curr_f; prev_g = curr_g;
+        prev_x = curr_x;
+        prev_f = curr_f;
+        prev_g = curr_g;
         curr_x = new_x;
-        if (curr_x > right_x) {
-            if (right_g > 0) {
-                curr_x = 0.5*left_x + 0.5*right_x;
-            } else {
+        if (curr_x > right_x)
+        {
+            if (right_g > 0)
+            {
+                curr_x = 0.5 * left_x + 0.5 * right_x;
+            }
+            else
+            {
                 if (curr_x > 3 * right_x - 2 * left_x)
                     curr_x = 3 * right_x - 2 * left_x;
             }
             return true;
         }
-        if (curr_x < left_x) {
+        if (curr_x < left_x)
+        {
 #ifdef MLIP_LINESEARCH_DEBUG
             std::cerr << "ls: curr_x < left_x, making dihotomy" << std::endl;
 #endif // MLIP_LINESEARCH_DEBUG
-            prev_x = curr_x; prev_f = curr_f; prev_g = curr_g;
-            curr_x = 0.5*left_x + 0.5*right_x;
-        return true;
+            prev_x = curr_x;
+            prev_f = curr_f;
+            prev_g = curr_g;
+            curr_x = 0.5 * left_x + 0.5 * right_x;
+            return true;
         }
-	return true;
+        return true;
     }
 };
 
@@ -251,28 +316,29 @@ public:
 class BFGS
 {
 private:
-    inline double ScalarProd(const double* v1, const double* v2);
-    Array1D delta_grad;                                 //!< needed for inv_hess update
-    Array1D yC;                                         //!< needed for inv_hess update
+    inline double ScalarProd(const double *v1, const double *v2);
+    Array1D delta_grad;
+    Array1D yC;
+    Array1D s_; // scratch buffer: alpha*p for Hessian update
 
 protected:
-    int size = 0;                                       //!< size of x, g, etc.
-    Array1D p;                                          //!< search (descent) direction
+    int size = 0;
+    Array1D p;
     double p_dot_g;
 
-    Linesearch linesearch;                              //!< linesearch engine
+    Linesearch linesearch;
 
-    Array1D x_start;                                    //!< linesearch initial x
-    double f_start = HUGE_DOUBLE;                       //!< linesearch initial f
-    Array1D g_start;                                    //!< linesearch initial g -- needed for inv_hess update
-    double p_dot_g_start;                               //!< linesearch initial p_dot_g (g can change during the linesearch)
+    Array1D x_start;
+    double f_start = HUGE_DOUBLE;
+    Array1D g_start;
+    double p_dot_g_start;
 
-    Array1D x_;                                         //< current x
+    Array1D x_;
     bool is_in_linesearch_ = false;
 
-    inline void SetStart(double f, const Array1D& g);   //! set initial point (x,g,f,p_dot_g) for linearsearch
-    void UpdateInvHess(const Array1D& g);               //! update inv_hess based on g, g_start, alpha, p
-    inline void Resize(int _size);                      //! resize all vectors and matrices, sets inv_hess to the identity matrix
+    inline void SetStart(double f, const Array1D &g);
+    void UpdateInvHess(const Array1D &g);
+    inline void Resize(int _size);
 
 public:
     Array2D inv_hess;
@@ -282,49 +348,48 @@ public:
     double wolfe_c2 = 0.5;
     bool no_Hessian_update = false;
 
-    void Set_x(const double *x, int _size);             //! sets x and resets (i.e., quits) linesearch. Does not reset Hessian if size is not changed
-    void Set_x(Array1D x) { Set_x(x.data(), (int)x.size()); };//! sets x and resets (i.e., quits) linesearch
+    void Set_x(const double *x, int _size);
+    void Set_x(Array1D x) { Set_x(x.data(), (int)x.size()); };
 
-    //! resets hess and restarts the iteration (i.e., quits linesearch)
-    //! inv_hess can be set manually immediately after calling Restart()
     void Restart();
 
-    double x(int i) { return x_[i]; }                   //! read-only access to x[i]
-	const Array1D& x() { return x_; }					//! read-only access to x
-    bool Iterate(double f, const Array1D& g); //! Make a BFGS iteration. Returns true if Iterate decreases the function. Otherwise false.
-    const Array1D& ReduceStep(double _coeff = 0.25);    //! Reduce the step (e.g., if x was unphysical)
+    double x(int i) { return x_[i]; }
+    const Array1D &x() { return x_; }
+    bool Iterate(double f, const Array1D &g);
+    const Array1D &ReduceStep(double _coeff = 0.25);
 };
 
-
-inline double BFGS::ScalarProd(const double* v1, const double* v2) {
-    double res = 0.0;
-    for (int i=0; i<size; i++)
-        res += v1[i] * v2[i];
-    return res;
+inline double BFGS::ScalarProd(const double *v1, const double *v2)
+{
+    const int one = 1;
+    return ddot_(&size, v1, &one, v2, &one);
 }
 
-inline void BFGS::SetStart(double f, const Array1D& g) {
-    memcpy(&x_start[0], &x_[0], size * sizeof(double));
-    memcpy(&g_start[0], &g[0], size * sizeof(double));
+inline void BFGS::SetStart(double f, const Array1D &g)
+{
+    const int one = 1;
+    dcopy_(&size, &x_[0], &one, &x_start[0], &one);
+    dcopy_(&size, &g[0], &one, &g_start[0], &one);
     f_start = f;
     p_dot_g_start = p_dot_g;
 }
 
-inline void BFGS::Resize(int _size) {
-    if (size == _size) return;
+inline void BFGS::Resize(int _size)
+{
+    if (size == _size)
+        return;
     size = _size;
     x_.resize(size);
     x_start.resize(size);
     g_start.resize(size);
     delta_grad.resize(size);
     yC.resize(size);
+    s_.resize(size);
     p.resize(size);
     inv_hess.resize(size, size);
     inv_hess.set(0.0);
-    for (int i=0; i<size; i++)
+    for (int i = 0; i < size; i++)
         inv_hess(i, i) = 1.0;
 }
 
-
-
-#endif //MLIP_BFGS_H
+#endif // MLIP_BFGS_H

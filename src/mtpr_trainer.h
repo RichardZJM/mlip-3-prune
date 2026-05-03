@@ -14,12 +14,16 @@
 
 extern "C" void dposv_(const char *uplo, const int *n, const int *nrhs,
                        double *a, const int *lda, double *b, const int *ldb, int *info);
+extern "C" void dpocon_(const char *uplo, const int *n, double *a, const int *lda, const double *anorm, double *rcond, double *work, int *iwork, int *info);
+extern "C" void dsyrk_(const char *uplo, const char *trans, const int *n, const int *k, const double *alpha, const double *a, const int *lda, const double *beta, double *c, const int *ldc);
+extern "C" void dsyr_(const char *uplo, const int *n, const double *alpha, const double *x, const int *incx, double *a, const int *lda);
 
 class MTPR_trainer : public NonLinearRegression
 {
 private:
     // LINEAR REGRESSION
     std::vector<double> lin_matrix;     // matrix of the quadratic optimization problem A*A^T = b*A^T
+    std::vector<double> lin_matrix_reg; // un-factorized backup matrix for conditional checking
     std::vector<double> lin_vector;     // vector of the quadratic optimization problem A*A^T = b*A^T
     double lin_scalar;                  // scalar of the quadratic optimization problem
     int lin_eqn_count;                  // number of equation in the quadratic optimization problem
