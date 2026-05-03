@@ -752,42 +752,61 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
             return c;
         };
 
-        double min_cond = get_cond(best_r);
+        double best_exp = 0.0;
+        double min_cond = get_cond(1.0); // Start at current scaling multiplier (r=1)
 
-        std::vector<double> zoom_levels = {2.0, 1.5, 1.2, 1.1, 1.05, 1.01, 1.005, 1.001};
-
-        for (double step : zoom_levels)
+        // Coarse grid search in log10 space from roughly 1e-5 to 1e5
+        double coarse_step = 0.1;
+        for (double exp = -5.0; exp <= 5.0 + 1e-9; exp += coarse_step)
         {
-            bool improved;
-            do
+            double r = std::pow(10.0, exp);
+            double c = get_cond(r);
+            if (c < min_cond)
             {
-                improved = false;
-                double local_best_r = best_r;
-                double local_min_cond = min_cond;
-
-                for (int i = -5; i <= 5; i++)
-                {
-                    if (i == 0)
-                        continue;
-
-                    double r = best_r * std::pow(step, i);
-                    double c = get_cond(r);
-
-                    if (c < local_min_cond)
-                    {
-                        local_min_cond = c;
-                        local_best_r = r;
-                    }
-                }
-
-                if (local_min_cond < min_cond)
-                {
-                    min_cond = local_min_cond;
-                    best_r = local_best_r;
-                    improved = true;
-                }
-            } while (improved);
+                min_cond = c;
+                best_exp = exp;
+            }
         }
+
+        // Golden Section Search around the best coarse exponent bracket
+        // Bounding it tight ensures GSS operates only on the valid, unimodal deep valley.
+        double a = best_exp - coarse_step;
+        double b = best_exp + coarse_step;
+
+        const double invphi = (std::sqrt(5.0) - 1.0) / 2.0;
+        const double invphi2 = (3.0 - std::sqrt(5.0)) / 2.0;
+
+        double x1 = a + invphi2 * (b - a);
+        double x2 = a + invphi * (b - a);
+
+        double f1 = get_cond(std::pow(10.0, x1));
+        double f2 = get_cond(std::pow(10.0, x2));
+
+        while ((b - a) > 1e-4) // Exponent tolerance (translates to roughly a 0.02% error in r itself)
+        {
+            if (f1 < f2)
+            {
+                b = x2;
+                x2 = x1;
+                f2 = f1;
+                x1 = a + invphi2 * (b - a);
+                f1 = get_cond(std::pow(10.0, x1));
+            }
+            else
+            {
+                a = x1;
+                x1 = x2;
+                f1 = f2;
+                x2 = a + invphi * (b - a);
+                f2 = get_cond(std::pow(10.0, x2));
+            }
+        }
+
+        double final_exp = 0.5 * (a + b);
+        best_r = std::pow(10.0, final_exp);
+
+        // Final evaluation to cache and log the best value safely
+        min_cond = get_cond(best_r);
 
         p_mlmtpr->scaling *= best_r;
 
