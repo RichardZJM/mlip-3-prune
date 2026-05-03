@@ -18,5 +18,6 @@
   "xtwx_val_file": "data/xtwx_val.bin",
   "xtwy_val_file": "data/xtwy_val.bin",
 
-  "out_dir": "out"
+  "out_dir": "out",
+  "restart_from": "out_20260430_162018"
 }

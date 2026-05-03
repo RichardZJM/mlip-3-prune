@@ -38,35 +38,17 @@ namespace
         mkdir(path.c_str(), 0777);
     }
 
-    template <typename T>
-    std::vector<T> read_binary(const std::string &filename)
-    {
-        std::ifstream file(filename, std::ios::binary | std::ios::ate);
-        if (!file)
-            throw std::runtime_error("Cannot open binary file: " + filename);
-        size_t size = file.tellg();
-        file.seekg(0, std::ios::beg);
-        size_t elements = size / sizeof(T);
-        std::vector<T> buffer(elements);
-        if (elements > 0)
-        {
-            file.read(reinterpret_cast<char *>(buffer.data()), elements * sizeof(T));
-        }
-        return buffer;
-    }
-
     std::string find_latest_population(const std::string &dir_path)
     {
-        if (!path_exists(dir_path))
+        if (dir_path.empty() || !path_exists(dir_path))
             return "";
-        std::string final_pop = dir_path + "/pareto_final_population.csv";
-        if (path_exists(final_pop))
-            return final_pop;
 
         DIR *dir;
         struct dirent *ent;
         int max_gen = -1;
         std::string latest_pop = "";
+        std::string final_pop = dir_path + "/pareto_final_population.csv";
+
         if ((dir = opendir(dir_path.c_str())) != NULL)
         {
             while ((ent = readdir(dir)) != NULL)
@@ -74,6 +56,12 @@ namespace
                 std::string fn = ent->d_name;
                 if (fn.find("pareto_") == 0 && fn.find("_population.csv") != std::string::npos)
                 {
+                    if (fn == "pareto_final_population.csv")
+                    {
+                        // treat final as highest priority
+                        closedir(dir);
+                        return final_pop;
+                    }
                     try
                     {
                         int gen = std::stoi(fn.substr(7, fn.find("_population.csv") - 7));
@@ -93,26 +81,21 @@ namespace
         return latest_pop;
     }
 
-    void resolve_output_dir(const std::string &base_out_dir, std::string &out_dir, std::string &latest_pop_file)
+    template <typename T>
+    std::vector<T> read_binary(const std::string &filename)
     {
-        std::string base = base_out_dir;
-        if (!base.empty() && base.back() == '/')
-            base.pop_back();
-        out_dir = base;
-        int restart_count = 1;
-        while (path_exists(out_dir))
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file)
+            throw std::runtime_error("Cannot open binary file: " + filename);
+        size_t size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        size_t elements = size / sizeof(T);
+        std::vector<T> buffer(elements);
+        if (elements > 0)
         {
-            restart_count++;
-            out_dir = base + "_" + std::to_string(restart_count);
+            file.read(reinterpret_cast<char *>(buffer.data()), elements * sizeof(T));
         }
-        latest_pop_file = "";
-        for (int r = restart_count - 1; r >= 1; --r)
-        {
-            std::string check_dir = (r == 1) ? base : base + "_" + std::to_string(r);
-            latest_pop_file = find_latest_population(check_dir);
-            if (!latest_pop_file.empty())
-                break;
-        }
+        return buffer;
     }
 
     void evaluate_population(int offset, int count, int n_var, int mpi_rank, int mpi_size,
@@ -275,14 +258,18 @@ void Prune::run()
     std::string out_dir, latest_pop_file;
     if (rank == 0)
     {
-        resolve_output_dir(config["out_dir"].get<std::string>(), out_dir, latest_pop_file);
+        auto t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "_%Y%m%d_%H%M%S", std::localtime(&t));
+        out_dir = config["out_dir"].get<std::string>() + buf;
+        latest_pop_file = find_latest_population(config.value("restart_from", ""));
         make_dir(out_dir);
         if (!latest_pop_file.empty())
         {
-            std::cout << "Restarting from previous results: " << latest_pop_file << "\n";
+            std::cout << "Restarting from: " << latest_pop_file << "\n";
             std::cout << "Insufficient populations will be randomly generated. The population will be scrambled.\n";
         }
-        std::cout << "Saving new results to: " << out_dir << "\n";
+        std::cout << "Saving results to: " << out_dir << "\n";
         ga.initialize_population(latest_pop_file);
         std::cout << "Evaluating initial population...\n";
     }

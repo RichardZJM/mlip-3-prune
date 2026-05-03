@@ -22,20 +22,22 @@ OUT_DIR=./out
 #   "mtp_file": "data/28.almtp",        MTP file path
 #   "pop_size": 1024,       Population size (512 or 1024) is usually good
 #   "n_gen": 30000,         Usually 30k is fine, minimum of 5-10k for convergence
-#   "time": 86000,              Time limit. Just set this to your wall time
+#   "time": 86000,              Time limit. Just set this to a bit below your wall time.
 #   "save_interval": 1000,              Save interval to write an output. Useful for convergence analysis and restarting.
 #   "regularization": 5e-7,             Regularizaton. Adjust this to balance conditioning and heuristic accuracy.
 #   "neigh_count": 46.017803,           Expected neighbor count. Choose this based on the training set of desired simulation.
 
-#   "seed": 42      Random Seed for evo algo
+#   "seed": 42,     Random Seed for evo algo
+#   "max_fill": 2,      Addresses the lamarckian agressiveness. Use at least 1. 2 is a good value, and high doesn't matter much.
 
-#   "ytwy_train": 4530536105.428369522094727,       # Get this from extract_problen
-#   "xtwx_train_file": "data/xtwx_train.bin",        # Get this from extract_problen
+#   "ytwy_train": 4530536105.428369522094727,        Get this from extract_problen
+#   "xtwx_train_file": "data/xtwx_train.bin",        Get this from extract_problen
 #   "xtwy_train_file": "data/xtwy_train.bin",        # Get this from extract_problen
 
-#   "ytwy_val": 1016717595.225109100341797,      # Get this from extract_problen
-#   "xtwx_val_file": "data/xtwx_val.bin",        # Get this from extract_problen
-#   "xtwy_val_file": "data/xtwy_val.bin",        # Get this from extract_problen
+#   "ytwy_val": 1016717595.225109100341797,      Get this from extract_problen
+#   "xtwx_val_file": "data/xtwx_val.bin",        Get this from extract_problen
+#   "xtwy_val_file": "data/xtwy_val.bin",        Get this from extract_problen
 
-#   "out_dir": "out"
+#   "out_dir": "out",
+#   "restart_from":""
 # }
