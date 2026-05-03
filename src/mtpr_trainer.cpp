@@ -733,16 +733,17 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
             return (rcond == 0.0) ? 1e99 : 1.0 / rcond;
         };
 
-        std::map<long long, double> cache;
+        // Cache stores: key -> {exact_r, condition_number}
+        std::map<long long, std::pair<double, double>> cache;
         auto get_cond = [&](double r) -> double
         {
             long long key = std::round(std::log(r) * 1e8);
             auto it = cache.find(key);
             if (it != cache.end())
-                return it->second;
+                return it->second.second;
 
             double c = estimate_cond(r);
-            cache[key] = c;
+            cache[key] = {r, c};
 
             logstrm1 << "   scaling = " << (p_mlmtpr->scaling * r)
                      << ", condition number = " << c << "\n";
@@ -769,7 +770,6 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
         }
 
         // Golden Section Search around the best coarse exponent bracket
-        // Bounding it tight ensures GSS operates only on the valid, unimodal deep valley.
         double a = best_exp - coarse_step;
         double b = best_exp + coarse_step;
 
@@ -782,7 +782,7 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
         double f1 = get_cond(std::pow(10.0, x1));
         double f2 = get_cond(std::pow(10.0, x2));
 
-        while ((b - a) > 1e-4) // Exponent tolerance (translates to roughly a 0.02% error in r itself)
+        while ((b - a) > 1e-4) // Exponent tolerance
         {
             if (f1 < f2)
             {
@@ -802,12 +802,29 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
             }
         }
 
+        // Final evaluation of the bracket midpoint to ensure the space is fully explored
         double final_exp = 0.5 * (a + b);
-        best_r = std::pow(10.0, final_exp);
+        get_cond(std::pow(10.0, final_exp));
 
-        // Final evaluation to cache and log the best value safely
-        min_cond = get_cond(best_r);
+        // Search the cache at the end to guarantee we take the exact evaluated point
+        // with the absolute lowest condition number
+        double final_min_cond = 1e99;
+        double final_best_r = 1.0;
 
+        for (const auto &entry : cache)
+        {
+            double r_val = entry.second.first;
+            double c_val = entry.second.second;
+
+            // In the rare event of identical lowest condition numbers, we slightly favor lower scaling.
+            if (c_val < final_min_cond || (c_val == final_min_cond && r_val < final_best_r))
+            {
+                final_min_cond = c_val;
+                final_best_r = r_val;
+            }
+        }
+
+        best_r = final_best_r;
         p_mlmtpr->scaling *= best_r;
 
         logstrm1 << "Rescaling to " << p_mlmtpr->scaling << "... done\n";
@@ -890,7 +907,7 @@ void MTPR_trainer::Train(std::vector<Configuration> &training_set)
 
     if (!p_mlmtpr->inited && maxits > 0 && !skip_preinit)
     { // pre-training for initial rescaling
-        LinOptimize(training_set);
+        // LinOptimize(training_set);
         Rescale(training_set);
 
 #ifdef MLIP_MPI
