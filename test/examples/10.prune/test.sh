@@ -7,7 +7,7 @@ MLP_EXE=../../../bin/mlp
 "$MLP_EXE" prune config.json 
 
 
-# MPI
+# Example MPI invocation
 # export OPENBLAS_NUM_THREADS=1
 # export OMP_NUM_THREADS=1
 # export OMP_DYNAMIC=FALSE

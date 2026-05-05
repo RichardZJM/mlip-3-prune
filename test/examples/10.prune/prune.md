@@ -1,7 +1,8 @@
 ## Prune
 
 `prune` is used to perform the pruning using NSGA-II.
-**Important for performance! Make to bind MPI processes and force BLAS threads to 1!**
+
+**Important for parallel performance! Make to bind MPI processes and force BLAS threads to 1!**
 
 The syntax is
 `prune config.json`
@@ -10,7 +11,7 @@ Where
 
 - `config.json` is the file path to the configuration JSON file.
 
-The configuration file contains exactly these fields. All fields are mandatory. The below include some recommend values for an MTP of level 28. Problem specific values depend on the data, the values below are for the SiO dataset by Karim et al.
+The configuration file contains exactly these fields. All fields are mandatory. The below shows some recommend values for an MTP of level 28. Some values like the matrices, regularization, and the neighbor count depend on the problem. The values below are for the SiO dataset by Karim et al.
 
 ```json
 {
@@ -46,20 +47,19 @@ Here is the example script's output.
 
 ```
 Initializing Pruner...
-Condition Number: 2.612741e+12
-WARNING: Condition number is extremely high. I hope you know what you are doing.
-         Consider increasing the regularization parameter to improve stability.
-Base SSE: 5.47697
+Condition Number: 8.193250e+11
+Base SSE: 6.26928
 Base Cost: 3.19038e+06
-Saving results to: out_20260505_142257
+Saving results to: out_20260505_165622
 Evaluating initial population...
-Generation 0/3 | Evaluations: 96 | Elapsed: 6.20s
-Generation 3/3 | Evaluations: 384 | Elapsed: 20.02s
+Generation 0/3 | Evaluations: 96 | Elapsed: 5.88s
+Saving intermediate results at generation 2...
+Generation 3/3 | Evaluations: 384 | Elapsed: 18.10s
 
-Optimization finished in 20.02s.
-Results saved to out_20260505_142257/pareto_final_*.csv
-Evaluation times per process:[20.02s]
-Average fitness evaluation time:         99.97%
+Optimization finished in 18.10s.
+Results saved to out_20260505_165622/pareto_final_*.csv
+Evaluation times per process:[18.10s]
+Average fitness evaluation time:         99.96%
 Communication overhead (Estimated):      0.00%
 Load imbalance (Estimated):              0.00%
 Pruning complete.

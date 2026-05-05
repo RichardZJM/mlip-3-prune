@@ -28,21 +28,21 @@ Optionally disable MPI support:
 cmake -D USE_MPI=NO ..
 ```
 
-Optionally, specify a BLAS vendor. See [options](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors).
+Optionally, specify a BLAS vendor. See the vendor [options](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors).
 
 ```bash
 cmake -DBLA_VENDOR=OpenBLAS ..
 ```
 
-After configuration, the executables can be compiled with make command:
+After configuration, the executable can be compiled with make command:
 
 ```bash
 make -j <n>
 ```
 
-The executable will be placed in `bin/mlp`. This is same as the original MLIP-3 package. The `lib/lib_mlip_interface.a` can be used with the MLIP-3-LAMMPS interface as usual.
+The executable will be placed in `build/mlp` and `bin/mlp`. This is similar to the original MLIP-3 package. The `lib/lib_mlip_interface.a` can be used with the MLIP-3-LAMMPS interface.
 
-However, it is **not** recommended to interface this fork to LAMMPS due to the BLAS dependency. If you plan to use this fork with the MLIP-3-LAMMPS interface you need to modify the `LAMMPS/Makefile.lammps.template` in the interface code to properly support the BLAS.
+However, it is **not** recommended to interface this fork to LAMMPS due to the BLAS dependency. If you plan to use this fork with the MLIP-3-LAMMPS interface you need to modify the `LAMMPS/Makefile.lammps.template` in the interface code to properly link BLAS.
 
 You can run the test suite with:
 

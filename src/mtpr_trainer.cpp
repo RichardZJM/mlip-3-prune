@@ -884,21 +884,21 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
 
         int TS_size = K;
 
-        if (!reg_init)
-            for (int i = 0; i < n; i++)
-                if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
-                    (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
-                {
-                    reg_init = true;
-                    break;
-                }
+        // if (!reg_init)
+        //     for (int i = 0; i < n; i++)
+        //         if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
+        //             (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
+        //         {
+        //             reg_init = true;
+        //             break;
+        //         }
 
-        if (reg_init)
-            for (int i = 0; i < n; i++)
-                p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+        // if (reg_init)
+        //     for (int i = 0; i < n; i++)
+        //         p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
 
-        for (int i = 0; i < n; i++)
-            lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
+        // for (int i = 0; i < n; i++)
+        //     lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
 
         // --- Write matrix and vector ---
         std::ofstream matrix_stream(matrix_file, std::ios::binary);
@@ -935,21 +935,21 @@ void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
     int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count;
     int TS_size = K;
 
-    if (!reg_init)
-        for (int i = 0; i < n; i++)
-            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
-                (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
-            {
-                reg_init = true;
-                break;
-            }
+    // if (!reg_init)
+    //     for (int i = 0; i < n; i++)
+    //         if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size) ||
+    //             (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size))
+    //         {
+    //             reg_init = true;
+    //             break;
+    //         }
 
-    if (reg_init)
-        for (int i = 0; i < n; i++)
-            p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+    // if (reg_init)
+    //     for (int i = 0; i < n; i++)
+    //         p_mlmtpr->reg_vector[i] = reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
 
-    for (int i = 0; i < n; i++)
-        lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
+    // for (int i = 0; i < n; i++)
+    //     lin_matrix[i * n + i] += p_mlmtpr->reg_vector[i] * TS_size;
 
     // --- Write matrix and vector (merged WriteProblem) ---
     std::ofstream matrix_stream(matrix_file, std::ios::binary);

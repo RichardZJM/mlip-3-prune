@@ -8,14 +8,14 @@ The syntax is
 
 Where
 
-- `pot.mtp` is the file path to the base MTP file
+- `base.mtp` is the file path to the base MTP file
 - `mask.csv` is the file path to the masks.
 - `row` is a zero-indexed integer value specifying which row of the mask file to use.
 - `out.mtp` is the output file path for the new mask MTP.
 
-Mask files are in the format output by the prune command. Each row contains the mask describing a pruned MTP. This is a sequence of `1` and `0`.
+Mask files are in the format outputted by the `prune` command. Each row contains the mask describing a pruned MTP. This is a sequence of `1` and `0`.
 
-## Mask Blank
+## Mask Inherited
 
 `mask_inherited` is used to write out a new, fitted MTP file given a mask. The MTP is fitted by preserving the radial parameters of the base potential and solving for the linear parameters. It is expected that this potential is refitted before usage. No seeds are need as this is a deterministic process.
 
@@ -25,13 +25,13 @@ The syntax is
 
 Where
 
-- `pot.mtp` is the file path to the base MTP file
+- `base.mtp` is the file path to the base MTP file
 - `config.json` is the file path to the configuration file. This is the same format as `prune` and the same file can be used.
 - `mask.csv` is the file path to the masks.
 - `row` is a zero-indexed integer value specifying which row of the mask file to use.
 - `out.mtp` is the output file path for the new mask MTP.
 
-Mask files are in the format output by the prune command. Each row contains the mask describing a pruned MTP. This is a sequence of `1` and `0`.
+Mask files are in the format outputted by the `prune` command. Each row contains the mask describing a pruned MTP. This is a sequence of `1` and `0`.
 
 ## Output
 

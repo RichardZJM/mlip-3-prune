@@ -4,12 +4,12 @@
 
 The syntax is
 
-`extract_problem pot.mtp data.cfg xtwx.bin xtwy.bin [options]`
+`extract_problem pot.mtp dataset.cfg xtwx.bin xtwy.bin [options]`
 
 Where
 
 - `pot.mtp` is the file path to the MTP file
-- `data.cfg` is the file path to the dataset to extract
+- `dataset.cfg` is the file path to the dataset to extract
 - `xtwx.bin` is the output file path for the $\mathbf{X^\intercal WX}$ matrix. (binary file)
 - `xtwy.bin` is the output file path for the $\mathbf{X^\intercal Wy}$ vector. (binary file)
 - `[options]` are additional options to specify the weights. These are the same options as those accepted by `train`.
@@ -26,7 +26,7 @@ Where
 
 - `pot.mtp` is the file path to the MTP file
 - `data.cfg` is the file path to the dataset to calculate the loss for
-  `[options]` are additional options to specify the weights. These are the same options as those accepted by `train`.
+- `[options]` are additional options to specify the weights. These are the same options as those accepted by `train`.
 
 ## Output
 

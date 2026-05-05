@@ -2466,7 +2466,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
     END_COMMAND;
 
     BEGIN_COMMAND("mask_blank",
-                  "Creates a blank pruned potential based on a mask row.",
+                  "Writes a blank pruned MTP based on a mask row.",
                   "mlp mask_blank base.mtp mask.csv row out.mtp\n")
     {
         if (args.size() != 4)
@@ -2502,7 +2502,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
     END_COMMAND;
 
     BEGIN_COMMAND("mask_inherited",
-                  "Creates a trained pruned potential by refitting linear parameters to a mask row.",
+                  "Writes a trained pruned MTP by refitting linear parameters to a mask row.",
                   "mlp mask_inherited base.mtp config.json mask.csv row out.mtp\n")
     {
         if (args.size() != 5)

@@ -3,9 +3,12 @@
   "pop_size": 96,
   "n_gen": 3,
   "time": 300,
-  "save_interval": 100,
-  "regularization": 1e-8,
+  "save_interval": 2,
+  "regularization": 1e-9,
   "neigh_count": 46.017803,
+
+  "seed": 42,
+  "max_fill": 2,
 
   "ytwy_train": 4530536105.428369522094727,
   "xtwx_train_file": "../10.prune/data/xtwx_train.bin",
@@ -15,5 +18,6 @@
   "xtwx_val_file": "../10.prune/data/xtwx_val.bin",
   "xtwy_val_file": "../10.prune/data/xtwy_val.bin",
 
-  "out_dir": "out"
+  "out_dir": "out",
+  "restart_from": ""
 }
