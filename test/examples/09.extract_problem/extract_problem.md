@@ -33,10 +33,10 @@ Where
 Here is the example script's output.
 
 ```
-Wrote: ./out/xtwx.bin
-Wrote: ./out/xtwy.bin
-yTWy: 22504.333319136716455
+Successfully wrote 668168 bytes to matrix file: ./out/xtwx.bin
+Successfully wrote 2312 bytes to vector file: ./out/xtwy.bin
+Sum of Squared Ground Truths (yTWy): 22504.333319136716455
 Average number of neighbors = 19.829365
 Extraction Complete!
-Training Loss: 0.277373
+Dataset Loss: 0.277373
 ```
