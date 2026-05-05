@@ -8,23 +8,42 @@
 // --- SSE Calculator ---
 SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::vector<double> &xtwy_train_, double ytwy_train_,
                              const std::vector<double> &xtwx_val_, const std::vector<double> &xtwy_val_, double ytwy_val_,
-                             bool is_self_validating_, double reg, int n_species_, int n_var, int rank)
+                             double reg_, int n_species_, int n_var, int rank)
     : xtwx_train(xtwx_train_), xtwy_train(xtwy_train_), ytwy_train(ytwy_train_),
       xtwx_val(xtwx_val_), xtwy_val(xtwy_val_), ytwy_val(ytwy_val_),
-      is_self_validating(is_self_validating_), n_species(n_species_)
+      reg(reg_), n_species(n_species_)
 {
     n_features = n_species + n_var;
+    scales.resize(n_features);
 
-    // Add regularization ONLY to the training X^T X matrix diagonal for stability.
+    // 1. Calculate Jacobi scales based on the pure training matrix diagonal
     for (int i = 0; i < n_features; ++i)
     {
+        double diag = xtwx_train[i * n_features + i];
+        scales[i] = (diag > 1e-12) ? 1.0 / std::sqrt(diag) : 1.0;
+    }
+
+    // 2. Pre-scale all matrices in memory for maximum GA speed
+    for (int i = 0; i < n_features; ++i)
+    {
+        xtwy_train[i] *= scales[i];
+        xtwy_val[i] *= scales[i];
+        for (int j = 0; j < n_features; ++j)
+        {
+            xtwx_train[i * n_features + j] *= scales[i] * scales[j];
+            xtwx_val[i * n_features + j] *= scales[i] * scales[j];
+        }
+
+        // 3. Bake Regularization directly into the scaled training matrix diagonal!
         xtwx_train[i * n_features + i] += reg;
     }
 
     if (rank == 0)
     {
         // Compute condition number on rank 0
+        // (We must make a copy because dsyev_ literally destroys the input array)
         std::vector<double> A_copy = xtwx_train;
+
         std::vector<double> w(n_features);
         char jobz = 'N';
         char uplo = 'U';
@@ -33,12 +52,10 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::
         int info_dsyev = 0;
         int lwork = -1;
 
-        // Query optimal workspace
         dsyev_(&jobz, &uplo, &n_eq, A_copy.data(), &n_eq, w.data(), &lwork_query, &lwork, &info_dsyev);
         lwork = static_cast<int>(lwork_query);
         std::vector<double> work(lwork);
 
-        // Compute exact eigenvalues
         dsyev_(&jobz, &uplo, &n_eq, A_copy.data(), &n_eq, w.data(), work.data(), &lwork, &info_dsyev);
 
         if (info_dsyev == 0)
@@ -51,7 +68,7 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::
             if (cond > 1e12)
             {
                 std::cout << "WARNING: Condition number is extremely high. I hope you know what you are doing.\n";
-                std::cout << "         Consider increasing the regularization parameter to improve stability.\n";
+                std::cout << "         Consider increasing the regularization parameter.\n";
             }
         }
     }
@@ -67,14 +84,6 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::
     if (rank == 0)
     {
         std::cout << "Base SSE: " << base_sse << "\n";
-        if (is_self_validating)
-        {
-            std::cout << "Mode: Fast Training Optimization (No separate validation set)\n";
-        }
-        else
-        {
-            std::cout << "Mode: Validation Set Evaluation\n";
-        }
     }
 }
 
@@ -91,20 +100,9 @@ bool SSECalculator::solve_theta(int n) const
 
     char uplo = 'U';
     int nrhs = 1, info = 0;
-    // B_buf is completely overwritten with the solution (Theta)
     dposv_(&uplo, &n, &nrhs, A_buf.data(), &n, B_buf.data(), &n, &info);
 
     return (info == 0);
-}
-
-double SSECalculator::compute_train_sse(int n) const
-{
-    double theta_dot_xtwy = 0;
-    for (int i = 0; i < n; ++i)
-    {
-        theta_dot_xtwy += B_buf[i] * xtwy_train[active_buf[i]];
-    }
-    return ytwy_train - theta_dot_xtwy;
 }
 
 double SSECalculator::compute_val_sse(int n) const
@@ -152,7 +150,7 @@ double SSECalculator::calculate(const char *genes) const
         return INFINITY;
 
     // --- Phase 2: Validate ---
-    double raw_sse = is_self_validating ? compute_train_sse(n) : compute_val_sse(n);
+    double raw_sse = compute_val_sse(n);
 
     return raw_sse / base_sse;
 }

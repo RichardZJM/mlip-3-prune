@@ -4,11 +4,11 @@
   "n_gen": 3,
   "time": 300,
   "save_interval": 100,
-  "regularization": 1e-8,
+  "regularization": 1e-9,
   "neigh_count": 46.017803,
 
   "seed": 42,
-  "max_fill": 20,
+  "max_fill": 2,
 
   "ytwy_train": 4530536105.428369522094727,
   "xtwx_train_file": "data/xtwx_train.bin",

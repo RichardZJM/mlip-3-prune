@@ -2348,7 +2348,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 
     BEGIN_COMMAND("extract_problem",
                   "Extracts the XTWX matrix and XTWy vector, and writes them as binary files. Prints yTWy and the average number of neighbors. Accepts the same options as train.",
-                  "mlp extract_problem potential.mtp train.cfg XTWX.bin XTWy.bin [options]:\n")
+                  "mlp extract_problem pot.mtp dataset.cfg XTWX.bin XTWy.bin [options]:\n")
     {
         if (args.size() != 4)
         {
@@ -2404,8 +2404,8 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
     END_COMMAND;
 
     BEGIN_COMMAND("calculate_loss",
-                  "Calculates the non-normalized loss over a training set. Accepts the same options as train.",
-                  "mlp calculate_loss potential.mtp train.cfg [options]:\n")
+                  "Calculates the non-normalized loss over a dataset. Accepts the same options as train.",
+                  "mlp calculate_loss pot.mtp dataset.cfg [options]:\n")
     {
         if (args.size() != 2)
         {

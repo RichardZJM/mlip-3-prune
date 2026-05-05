@@ -12,24 +12,21 @@ class SSECalculator
 {
     std::vector<double> xtwx_train, xtwy_train;
     std::vector<double> xtwx_val, xtwy_val;
-    double ytwy_train, ytwy_val, base_sse;
-    bool is_self_validating;
+    std::vector<double> scales;
+    double ytwy_train, ytwy_val, base_sse, reg;
     int n_features, n_species;
 
-    // Pre-allocated buffers to prevent re-allocation
     mutable std::vector<int> active_buf;
     mutable std::vector<double> A_buf;
     mutable std::vector<double> B_buf;
 
-    // Semantic Subroutines
     bool solve_theta(int n) const;
-    double compute_train_sse(int n) const;
     double compute_val_sse(int n) const;
 
 public:
     SSECalculator(const std::vector<double> &xtwx_train, const std::vector<double> &xtwy_train, double ytwy_train,
                   const std::vector<double> &xtwx_val, const std::vector<double> &xtwy_val, double ytwy_val,
-                  bool is_self_validating, double reg, int n_species, int n_var, int rank);
+                  double reg, int n_species, int n_var, int rank);
 
     double calculate(const char *genes) const;
 };

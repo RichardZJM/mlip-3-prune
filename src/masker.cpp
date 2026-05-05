@@ -294,6 +294,14 @@ std::vector<double> Masker::SolveTheta(const std::string &config_file, const std
         throw std::runtime_error("xtwx matrix size mismatch. Expected " + std::to_string(expected_size) + ", got " + std::to_string(xtwx.size()));
     }
 
+    // Precompute scale factors
+    std::vector<double> scales(n_features);
+    for (int i = 0; i < n_features; ++i)
+    {
+        double diag = xtwx[i * n_features + i];
+        scales[i] = (diag > 1e-12) ? 1.0 / std::sqrt(diag) : 1.0;
+    }
+
     std::vector<int> active_idx;
     for (int i = 0; i < species_count; ++i)
         active_idx.push_back(i);
@@ -307,18 +315,19 @@ std::vector<double> Masker::SolveTheta(const std::string &config_file, const std
     std::vector<double> A(n_active * n_active);
     std::vector<double> B(n_active);
 
-    for (int i = 0; i < n_features; ++i)
-    {
-        xtwx[i * n_features + i] += reg;
-    }
-
     for (int i = 0; i < n_active; ++i)
     {
-        B[i] = xtwy[active_idx[i]];
+        int idx_i = active_idx[i];
+        B[i] = xtwy[idx_i] * scales[idx_i];
+
         for (int j = 0; j < n_active; ++j)
         {
-            A[i * n_active + j] = xtwx[active_idx[i] * n_features + active_idx[j]];
+            int idx_j = active_idx[j];
+            A[i * n_active + j] = xtwx[idx_i * n_features + idx_j] * scales[idx_i] * scales[idx_j];
         }
+
+        // Add Tikhonov regularization
+        A[i * n_active + i] += reg;
     }
 
     char uplo = 'U';
@@ -328,6 +337,12 @@ std::vector<double> Masker::SolveTheta(const std::string &config_file, const std
     if (info > 0)
     {
         throw std::runtime_error("Cholesky decomposition failed. The active matrix is not positive definite.");
+    }
+
+    // Unscale before returning
+    for (int i = 0; i < n_active; ++i)
+    {
+        B[i] *= scales[active_idx[i]];
     }
 
     return B;

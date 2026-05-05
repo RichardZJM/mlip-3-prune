@@ -1,6 +1,0 @@
-Wrote: ./out/xtwx.bin
-Wrote: ./out/xtwy.bin
-yTWy: 22504.333319136716455
-Average number of neighbors = 19.829365
-Extraction Complete!
-Training Loss: 0.277373

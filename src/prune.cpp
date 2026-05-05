@@ -204,20 +204,13 @@ void Prune::run()
     std::string xtwy_val_file = config["xtwy_val_file"].get<std::string>();
     double ytwy_val = config["ytwy_val"].get<double>();
 
-    bool is_self_validating = (xtwx_train_file == xtwx_val_file) &&
-                              (xtwy_train_file == xtwy_val_file) &&
-                              (ytwy_train == ytwy_val);
-
     std::vector<double> xtwx_train, xtwy_train, xtwx_val, xtwy_val;
     if (rank == 0)
     {
         xtwx_train = read_binary<double>(xtwx_train_file);
         xtwy_train = read_binary<double>(xtwy_train_file);
-        if (!is_self_validating)
-        {
-            xtwx_val = read_binary<double>(xtwx_val_file);
-            xtwy_val = read_binary<double>(xtwy_val_file);
-        }
+        xtwx_val = read_binary<double>(xtwx_val_file);
+        xtwy_val = read_binary<double>(xtwy_val_file);
     }
 
 #ifdef MLIP_MPI
@@ -233,16 +226,13 @@ void Prune::run()
 
     bcast_vec_d(xtwx_train);
     bcast_vec_d(xtwy_train);
-    if (!is_self_validating)
-    {
-        bcast_vec_d(xtwx_val);
-        bcast_vec_d(xtwy_val);
-    }
+    bcast_vec_d(xtwx_val);
+    bcast_vec_d(xtwy_val);
 #endif
 
     SSECalculator sse_calc(xtwx_train, xtwy_train, ytwy_train,
                            xtwx_val, xtwy_val, ytwy_val,
-                           is_self_validating, config.value("regularization", 0.0), spec_cnt, a_sca_cnt, rank);
+                           config.value("regularization", 0.0), spec_cnt, a_sca_cnt, rank);
 
     CostCalculator cost_calc(a_mom_cnt, idx_basic, idx_times, map_mom, config["neigh_count"], r_size, rank);
 

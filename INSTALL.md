@@ -22,7 +22,7 @@ cmake ..
 
 Set the correct configuration options.
 
-Disable MPI support:
+Optionally disable MPI support:
 
 ```bash
 cmake -D USE_MPI=NO ..
@@ -40,9 +40,9 @@ After configuration, the executables can be compiled with make command:
 make -j <n>
 ```
 
-The executable will be placed in `bin/libmlip_interface.a`. This is same as the original MLIP-3 package. The `lib/lib_mlip_interface.a` can be used with the MLIP-3-LAMMPS interface as usual.
+The executable will be placed in `bin/mlp`. This is same as the original MLIP-3 package. The `lib/lib_mlip_interface.a` can be used with the MLIP-3-LAMMPS interface as usual.
 
-It is **not** recommended to interface this fork to LAMMPS due to the BLAS dependency. If you plan to use this fork with the MLIP-3-LAMMPS interface you need to modify the `LAMMPS/Makefile.lammps.template` in the interface code to properly support the BLAS.
+However, it is **not** recommended to interface this fork to LAMMPS due to the BLAS dependency. If you plan to use this fork with the MLIP-3-LAMMPS interface you need to modify the `LAMMPS/Makefile.lammps.template` in the interface code to properly support the BLAS.
 
 You can run the test suite with:
 
