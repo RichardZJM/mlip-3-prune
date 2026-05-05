@@ -3,7 +3,7 @@
   "pop_size": 96,
   "n_gen": 3,
   "time": 300,
-  "save_interval": 100,
+  "save_interval": 2,
   "regularization": 1e-9,
   "neigh_count": 46.017803,
 
@@ -19,5 +19,5 @@
   "xtwy_val_file": "data/xtwy_val.bin",
 
   "out_dir": "out",
-  "restart_from": "out_20260430_162018"
+  "restart_from": ""
 }
