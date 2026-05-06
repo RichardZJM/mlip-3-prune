@@ -8,11 +8,9 @@
 
 #include "basic_trainer.h"
 
+const char *AnyTrainer::tagname = {"fit"};
 
-const char* AnyTrainer::tagname = {"fit"};
-
-AnyTrainer::AnyTrainer(AnyLocalMLIP * _p_mlip, const Settings & settings) :
-    p_mlip(_p_mlip)
+AnyTrainer::AnyTrainer(AnyLocalMLIP *_p_mlip, const Settings &settings, const bool verbose) : p_mlip(_p_mlip)
 {
     InitSettings();
     ApplySettings(settings);
@@ -20,13 +18,12 @@ AnyTrainer::AnyTrainer(AnyLocalMLIP * _p_mlip, const Settings & settings) :
     if (mpi.rank == 0)
     {
         std::ifstream ifs(mlip_fitted_fnm);
-        if (ifs.is_open())
+        if (verbose && ifs.is_open())
             Warning("File " + mlip_fitted_fnm + " already exists and will be overwritten during the training procedure!");
     }
 
     SetTagLogStream("fit", fit_log);
 
-    Message("Basic trainer initialization complete");
+    if (verbose)
+        Message("Basic trainer initialization complete");
 }
-
-

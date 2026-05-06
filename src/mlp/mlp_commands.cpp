@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <sstream>
 #include "mlp.h"
+#include "../prune.h"
+#include "../masker.h"
 #include "../mtpr_trainer.h"
 #include "../wrapper.h"
 #include "../drivers/basic_drivers.h"
@@ -2345,8 +2347,8 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
     END_COMMAND;
 
     BEGIN_COMMAND("extract_problem",
-                  "Extracts the minimization matrix XTWX and vector XTWy. Accepts the same options as train.",
-                  "mlp extract_problem potential.mtp train.cfg XTWX.bin XTWy.bin [options]:\n")
+                  "Extracts the XTWX matrix and XTWy vector, and writes them as binary files. Prints yTWy and the average number of neighbors. Accepts the same options as train.",
+                  "mlp extract_problem pot.mtp dataset.cfg XTWX.bin XTWy.bin [options]:\n")
     {
         if (args.size() != 4)
         {
@@ -2369,72 +2371,6 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         SetTagLogStream("dev", &std::cout);
         MLMTPR mtp(args[0]);
 
-        bool has_selection = false;
-        double sel_ene_wgt = 0.0;
-        double sel_frc_wgt = 0.0;
-        double sel_str_wgt = 0.0;
-        double sel_nbh_wgt = 0.0;
-        int sel_wgt_scl = 2;
-
-        {
-            ifstream ifs(args[0], ios::binary);
-            ifs.ignore(HUGE_INT, '#');
-            if (ifs.fail() || ifs.eof())
-            {
-                Message("Selection data was not found in MTP and will be set");
-                if (settings["al_mode"] == "nbh")
-                {
-                    Message("Selection by neighborhoods is set");
-                    sel_nbh_wgt = 1.0;
-                }
-                else if (settings["al_mode"] == "cfg")
-                {
-                    Message("Selection by configurations is set");
-                    sel_ene_wgt = 1.0;
-                }
-                else
-                {
-                    ERROR("Invalid al_mode");
-                }
-            }
-            else
-            {
-                Message("Selection data found");
-
-                has_selection = true;
-
-                string tmpstr;
-                ifs >> tmpstr;
-                if (tmpstr != "MVS_v1.1")
-                    ERROR("Invalid MVS-file format");
-
-                ifs >> tmpstr;
-                if (tmpstr != "energy_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_ene_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "force_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_frc_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "stress_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_str_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "site_en_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_nbh_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "weight_scaling")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_wgt_scl;
-            }
-        }
-
 #ifdef MLIP_MPI
         vector<Configuration> training_set = MPI_LoadCfgs(args[1]);
 #else
@@ -2442,7 +2378,7 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 #endif
 
         // training
-        MTPR_trainer mtptr(&mtp, settings);
+        MTPR_trainer mtptr(&mtp, settings, false);
         mtptr.ExtractProblem(training_set, args[2], args[3]);
 
         int sum_neighs = 0;
@@ -2463,46 +2399,13 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 #endif
         double ave_neighs = static_cast<double>(glob_neighs) / glob_atoms;
         Message("Average number of neighbors = " + std::to_string(ave_neighs));
-
-        // // training errrors calculation
-        // Settings erm_settings;
-        // erm_settings["reprt_to"] = settings["log"];
-        // ErrorMonitor errmon(erm_settings);
-        // for (Configuration &cfg : training_set)
-        // {
-        //     Configuration cfg_check(cfg);
-        //     mtp.CalcEFS(cfg_check);
-        //     errmon.AddToCompare(cfg, cfg_check);
-        // }
-        // errmon.GetReport();
-
-        // {
-        //     Settings select_setup;
-        //     CfgSelection select(&mtp, select_setup);
-        //     //            if (has_selection)
-        //     {
-        //         select.MV_ene_cmpnts_weight = sel_ene_wgt;
-        //         select.MV_frc_cmpnts_weight = sel_frc_wgt;
-        //         select.MV_str_cmpnts_weight = sel_str_wgt;
-        //         select.MV_nbh_cmpnts_weight = sel_nbh_wgt;
-        //         select.wgt_scale_power = sel_wgt_scl;
-        //     }
-
-        //     for (auto &cfg : training_set)
-        //         select.AddForSelection(cfg);
-
-        //     select.Select();
-
-        //     select.Save(settings["save_to"]);
-        // }
-
         Message("Extraction Complete!");
     }
     END_COMMAND;
 
     BEGIN_COMMAND("calculate_loss",
-                  "Calculates the non-normalized loss over a training set. Accepts the same options as train.",
-                  "mlp calculate_loss potential.mtp train.cfg [options]:\n")
+                  "Calculates the non-normalized loss over a dataset. Accepts the same options as train.",
+                  "mlp calculate_loss pot.mtp dataset.cfg [options]:\n")
     {
         if (args.size() != 2)
         {
@@ -2525,83 +2428,115 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
         SetTagLogStream("dev", &std::cout);
         MLMTPR mtp(args[0]);
 
-        bool has_selection = false;
-        double sel_ene_wgt = 0.0;
-        double sel_frc_wgt = 0.0;
-        double sel_str_wgt = 0.0;
-        double sel_nbh_wgt = 0.0;
-        int sel_wgt_scl = 2;
-
-        {
-            ifstream ifs(args[0], ios::binary);
-            ifs.ignore(HUGE_INT, '#');
-            if (ifs.fail() || ifs.eof())
-            {
-                Message("Selection data was not found in MTP and will be set");
-                if (settings["al_mode"] == "nbh")
-                {
-                    Message("Selection by neighborhoods is set");
-                    sel_nbh_wgt = 1.0;
-                }
-                else if (settings["al_mode"] == "cfg")
-                {
-                    Message("Selection by configurations is set");
-                    sel_ene_wgt = 1.0;
-                }
-                else
-                {
-                    ERROR("Invalid al_mode");
-                }
-            }
-            else
-            {
-                Message("Selection data found");
-
-                has_selection = true;
-
-                string tmpstr;
-                ifs >> tmpstr;
-                if (tmpstr != "MVS_v1.1")
-                    ERROR("Invalid MVS-file format");
-
-                ifs >> tmpstr;
-                if (tmpstr != "energy_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_ene_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "force_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_frc_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "stress_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_str_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "site_en_weight")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_nbh_wgt;
-
-                ifs >> tmpstr;
-                if (tmpstr != "weight_scaling")
-                    ERROR("Invalid MVS-file format");
-                ifs >> sel_wgt_scl;
-            }
-        }
-
 #ifdef MLIP_MPI
         vector<Configuration> training_set = MPI_LoadCfgs(args[1]);
 #else
         vector<Configuration> training_set = LoadCfgs(args[1]);
 #endif
-
-        // training
-        MTPR_trainer mtptr(&mtp, settings);
+        MTPR_trainer mtptr(&mtp, settings, false);
         double loss = mtptr.FindLoss(training_set);
-        Message("Training Loss: " + std::to_string(loss));
+        Message("Dataset Loss: " + std::to_string(loss));
     }
     END_COMMAND;
+
+    BEGIN_COMMAND("prune",
+                  "Prunes a potential.",
+                  "mlp prune config.json\n")
+    {
+        if (args.size() != 1)
+        {
+            std::cout << "mlp prune: 1 argument is required, the config.json\n";
+            return 1;
+        }
+
+        SetTagLogStream("dev", &std::cout);
+
+        try
+        {
+            Message("Initializing Pruner...");
+            Prune pruner(args[0]);
+            pruner.run();
+            Message("Pruning complete.");
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << "Error during pruning: " << e.what() << std::endl;
+        }
+    }
+    END_COMMAND;
+
+    BEGIN_COMMAND("mask_blank",
+                  "Writes a blank pruned MTP based on a mask row.",
+                  "mlp mask_blank base.mtp mask.csv row out.mtp\n")
+    {
+        if (args.size() != 4)
+        {
+            std::cerr << "Usage: mlp mask_blank base.mtp mask.csv row out.mtp\n";
+        }
+        else
+        {
+            int rank = 0;
+#ifdef MLIP_MPI
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
+            if (rank == 0)
+            {
+                try
+                {
+                    Masker masker(args[0]);
+                    auto mask = Masker::ReadMask(args[1], std::stoi(args[2]), masker.alpha_scalar_moments);
+                    masker.ApplyMask(mask, nullptr);
+                    masker.Save(args[3]);
+                    std::cout << "Successfully wrote blank pruned potential to " << args[3] << "\n";
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Error: " << e.what() << "\n";
+                }
+            }
+#ifdef MLIP_MPI
+            MPI_Barrier(MPI_COMM_WORLD);
+#endif
+        }
+    }
+    END_COMMAND;
+
+    BEGIN_COMMAND("mask_inherited",
+                  "Writes a trained pruned MTP by refitting linear parameters to a mask row.",
+                  "mlp mask_inherited base.mtp config.json mask.csv row out.mtp\n")
+    {
+        if (args.size() != 5)
+        {
+            std::cerr << "Usage: mlp mask_inherited base.mtp config.json mask.csv row out.mtp\n";
+        }
+        else
+        {
+            int rank = 0;
+#ifdef MLIP_MPI
+            MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+#endif
+            if (rank == 0)
+            {
+                try
+                {
+                    Masker masker(args[0]);
+                    auto mask = Masker::ReadMask(args[2], std::stoi(args[3]), masker.alpha_scalar_moments);
+                    auto theta = Masker::SolveTheta(args[1], mask, masker.species_count);
+                    masker.ApplyMask(mask, &theta);
+                    masker.Save(args[4]);
+                    std::cout << "Successfully wrote inherited pruned potential to " << args[4] << "\n";
+                }
+                catch (const std::exception &e)
+                {
+                    std::cerr << "Error: " << e.what() << "\n";
+                }
+            }
+#ifdef MLIP_MPI
+            MPI_Barrier(MPI_COMM_WORLD);
+#endif
+        }
+    }
+    END_COMMAND;
+
     return is_command_found;
 }

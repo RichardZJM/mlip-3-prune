@@ -1,5 +1,6 @@
 # git repos for docker-build.sh
 external/*
+.vscode
 
 # OpenBLAS
 OpenBLAS/*
@@ -38,8 +39,8 @@ dev_src/alglib/*.o
 *.[ao]
 *.swp
 
-
 bin/*
+build/*
 lib/*
 obj/*
 !README.md
@@ -56,7 +57,7 @@ doc/examples/**/vasp
 doc/examples/**/log.lammps
 
 test/self-test/**/out
-test/examples/**/out
+test/examples/**/out*
 test/examples/**/vasp
 test/examples/convert-cfg/**/out
 test/python/**/out

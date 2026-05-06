@@ -1,38 +1,23 @@
 # MLIP
 
 This is a fork of [MLIP-3](https://gitlab.com/ashapeev/mlip-3), a software for Machine Learning Interatomic Potentials.
-MLIP-3 was been developed at Skoltech (Moscow) by
-Alexander Shapeev, Evgeny Podryabinkin, Konstantin Gubaev, and Ivan Novikov
+This fork introduces 5 new commands to prune potentials. **BLAS/LAPACK is now a mandatory dependency** and the project is now built with CMake. Please visit the [installation guide](INSTALL.md) for more information.
 
-The paper for this fork is available [here]().
+These five commands are:
 
-## Additional Functionality
+| Command           | Description                                                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prune`           | Prunes an MTP to jointly optimize cost and accuracy. Produces basis function masks.                                                                                                                                       |
+| `extract_problem` | Extracts and saves the matrix data needed for pruning.                                                                                                                                                                    |
+| `calculate_loss`  | Convenience command to report the loss for a given MTP and dataset. Useful for comparing potentials and seeds.                                                                                                            |
+| `mask_blank`      | Applies a mask to an MTP, yielding a usable but unfitted MTP file. You are then expected to fit this potential with `train` before usage, likely with several random seeds.                                               |
+| `mask_inherited`  | Applies a mask to an MTP, yielding a fitted MTP file. This fit uses the same radial parameters as the base MTP and refits the linear parameters. You are then expected to refit this potential with `train` before usage. |
 
-This fork introduces two additional commands to the `mlp` binary to support [MTP basis optimization](https://github.com/RichardZJM/MTP_basis_optimization). An example is available in `test/examples/09.extract_problem`.
+Please visit the following examples for more details.
 
-1. `extract_problem path/to/potential path/to/dataset /path/to/write/xtwx /path/to/write/xtwy [options]`
-
-   This command extracts the matrix problem. It accepts:
-
-   - A fitted potential
-   - A training dataset
-
-   And outputs:
-
-   - The $\mathbf{X}^\intercal\mathbf{WX}$ matrix (binary file)
-   - The $\mathbf{X}^\intercal\mathbf{Wy}$ vector (binary file)
-   - The $\mathbf{y}^\intercal\mathbf{Wy}$ value (scalar)
-   - The average number of neighbors (scalar)
-
-   The binary files are written to the specified paths, and the scalar values are printed to the command line.
-
-2. `calculate_loss path/to/potential path/to/dataset [options]`
-
-   This is a convenience command that exposes the loss to facilitate comparisons between potentials. It was used in the paper to evaluate the training loss of potentials.
-
-Both these commands can accept the same options as the `train` command. These options are most relevant for parameters that affect the loss functions such as `energy_weight`, `force_weight`, `stress_weight`, `weight_scaling` and `weight_scaling_forces`. Since they use the same trainer constructor as the `train` command, there may be a warning that the potential will be overwritten—this is vestigial, neither of these two commands overwritten the input files.
-
-The codebase is compiled the same as MLIP-3.
+- [Extracting a Problem](test/examples/09.extract_problem/extract_problem.md)
+- [Pruning](test/examples/10.prune/prune.md)
+- [Writing New MTP Files](test/examples/11.mask_potential/mask_potential.md)
 
 ## Licence
 
