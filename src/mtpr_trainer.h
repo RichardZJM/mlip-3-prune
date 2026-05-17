@@ -18,6 +18,9 @@ extern "C" void dposv_(const char *uplo, const int *n, const int *nrhs,
 class MTPR_trainer : public NonLinearRegression
 {
 private:
+    double time_lin = 0.0;
+    double time_bfgs = 0.0;
+
     // LINEAR REGRESSION
     std::vector<double> lin_matrix;     // matrix of the quadratic optimization problem A*A^T = b*A^T
     std::vector<double> lin_vector;     // vector of the quadratic optimization problem A*A^T = b*A^T
@@ -77,5 +80,6 @@ public:
     void NonLinOptimize(std::vector<Configuration> &training_set, int max_iter);                                                   // launch the nonlinear optimization procedure, with Shapeev BFGS
     double FindLoss(std::vector<Configuration> &training_set);                                                                     // Print the loss to the user
     void ExtractProblem(std::vector<Configuration> &training_set, const std::string &matrix_file, const std::string &vector_file); // Extract matrix problem for pruning
+    void ProfileCosts(std::vector<Configuration> &training_set, int sample_count);                                                 // Profile the gradient cost per confg (for MPI load-balancing)
 };
 #endif // MLIP_MTPR_TRAINER_H

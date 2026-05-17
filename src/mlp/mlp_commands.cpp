@@ -2538,5 +2538,74 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
     }
     END_COMMAND;
 
+    BEGIN_COMMAND("profile_costs",
+                  "Profiles gradient evaluation costs for each configuration in a dataset.",
+                  "mlp profile_costs pot.mtp dataset.cfg sample_count\n"
+                  "  sample_count: Number of iterations to average per configuration.\n")
+    {
+        if (args.size() != 3)
+        {
+            cout << "mlp profile_costs: 3 arguments are required (pot, dataset, sample_count)\n";
+            return 1;
+        }
+
+        string pot_fnm = args[0];
+        string db_fnm = args[1];
+        int sample_count = std::stoi(args[2]);
+        string out_fnm = db_fnm + ".profiled";
+
+        if (sample_count <= 0)
+        {
+            cout << "sample_count must be a positive integer.\n";
+            return 1;
+        }
+
+        Settings settings;
+        settings.Modify(opts);
+
+        // Load Potential
+        MLMTPR mtp(pot_fnm);
+
+        // Load Configurations (MPI-aware)
+#ifdef MLIP_MPI
+        vector<Configuration> training_set = MPI_LoadCfgs(db_fnm);
+#else
+        vector<Configuration> training_set = LoadCfgs(db_fnm);
+#endif
+        // Remove empty tail if present
+        if (!training_set.empty() && training_set.back().size() == 0)
+            training_set.pop_back();
+
+        // Initialize Trainer
+        MTPR_trainer mtptr(&mtp, settings, false);
+
+        Message("Profiling " + std::to_string(training_set.size()) + " configurations (Rank " + std::to_string(mpi.rank) + ")...");
+
+        // Execute profiling
+        mtptr.ProfileCosts(training_set, sample_count);
+
+        // Coordination for file writing:
+        // We follow the 'mindist' pattern: Clear/create file on Rank 0, then append.
+        if (mpi.rank == 0)
+        {
+            ofstream ofs(out_fnm, ios::trunc);
+            if (!ofs.is_open())
+                ERROR("Could not create output file " + out_fnm);
+        }
+
+#ifdef MLIP_MPI
+        MPI_Barrier(mpi.comm);
+#endif
+
+        // Save each configuration with the new 'comp_cost' feature
+        for (auto &cfg : training_set)
+        {
+            cfg.AppendToFile(out_fnm);
+        }
+
+        if (mpi.rank == 0)
+            Message("Profiling complete. Profiled dataset saved to: " + out_fnm);
+    }
+    END_COMMAND;
     return is_command_found;
 }

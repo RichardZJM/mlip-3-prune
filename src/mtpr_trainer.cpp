@@ -8,6 +8,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cstring>
+#include <chrono>
 
 using namespace std;
 
@@ -160,8 +161,11 @@ void MTPR_trainer::LinOptimize(vector<Configuration> &training_set)
 
     ClearSLAE();
 
+    auto t_lin_start = std::chrono::high_resolution_clock::now();
     for (auto &cfg : training_set)
         AddToSLAE(cfg);
+    auto t_lin_end = std::chrono::high_resolution_clock::now();
+    time_lin += std::chrono::duration<double>(t_lin_end - t_lin_start).count();
 
     int m = (int)training_set.size(); // train set size on the current core
     int K = m;                        // train set size over all cores
@@ -512,7 +516,10 @@ void MTPR_trainer::NonLinOptimize(std::vector<Configuration> &training_set, int 
 #ifdef MLIP_MPI
         MPI_Bcast(&x[0], n, MPI_DOUBLE, 0, mpi.comm);
 #endif
+        auto t_bfgs_start = std::chrono::high_resolution_clock::now();
         CalcObjectiveFunctionGrad(training_set);
+        auto t_bfgs_end = std::chrono::high_resolution_clock::now();
+        time_bfgs += std::chrono::duration<double>(t_bfgs_end - t_bfgs_start).count();
         // divide the loss function and its gradients on the training set size
         loss_ /= K;
         for (int i = 0; i < n; i++)
@@ -720,6 +727,11 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
 
 void MTPR_trainer::Train(std::vector<Configuration> &training_set)
 {
+    // Start global profiling
+    auto t_train_start = std::chrono::high_resolution_clock::now();
+    time_lin = 0.0;
+    time_bfgs = 0.0;
+
 #ifdef MLIP_MPI
     MPI_Barrier(mpi.comm);
 #endif
@@ -841,7 +853,57 @@ void MTPR_trainer::Train(std::vector<Configuration> &training_set)
                 p_mlmtpr->Save(mlip_fitted_fnm);
     }
 
+#ifdef MLIP_MPI
     MPI_Barrier(mpi.comm);
+#endif
+
+    auto t_train_end = std::chrono::high_resolution_clock::now();
+    double total_wall_time = std::chrono::duration<double>(t_train_end - t_train_start).count();
+
+    int n_ranks = 1;
+#ifdef MLIP_MPI
+    n_ranks = mpi.size;
+#endif
+
+    std::vector<double> all_lin(n_ranks, time_lin);
+    std::vector<double> all_bfgs(n_ranks, time_bfgs);
+
+#ifdef MLIP_MPI
+    MPI_Gather(&time_lin, 1, MPI_DOUBLE, all_lin.data(), 1, MPI_DOUBLE, 0, mpi.comm);
+    MPI_Gather(&time_bfgs, 1, MPI_DOUBLE, all_bfgs.data(), 1, MPI_DOUBLE, 0, mpi.comm);
+#endif
+
+#ifdef MLIP_MPI
+    if (mpi.rank == 0)
+#endif
+    {
+        double total_lin = 0.0;
+        double total_bfgs = 0.0;
+        double max_active_time = 0.0;
+
+        for (int i = 0; i < n_ranks; i++)
+        {
+            total_lin += all_lin[i];
+            total_bfgs += all_bfgs[i];
+            double active = all_lin[i] + all_bfgs[i];
+            if (active > max_active_time)
+                max_active_time = active;
+        }
+
+        double avg_active_time = (total_lin + total_bfgs) / n_ranks;
+        double load_balance_inefficiency = (avg_active_time > 0) ? ((max_active_time / avg_active_time) - 1.0) * 100.0 : 0.0;
+        double parallel_efficiency = (total_wall_time > 0) ? (avg_active_time / total_wall_time) * 100.0 : 0.0;
+
+        logstrm1 << "\n========= PROFILING SUMMARY =========\n"
+                 << "Total Runtime: " << total_wall_time << " seconds\n"
+                 << "Avg Lin SLAE generation time: " << ((total_lin / n_ranks) / total_wall_time) * 100.0 << "% of total runtime\n"
+                 << "Avg BFGS gradient/loss time:  " << ((total_bfgs / n_ranks) / total_wall_time) * 100.0 << "% of total runtime\n"
+                 << "Load Balance Inefficiency:    " << load_balance_inefficiency << "%\n"
+                 << "Overall Parallel Efficiency:  " << parallel_efficiency << "%\n"
+                 << "=====================================\n";
+        MLP_LOG("fit", logstrm1.str());
+        logstrm1.str("");
+    }
 }
 
 void MTPR_trainer::ExtractProblem(std::vector<Configuration> &training_set,
@@ -992,4 +1054,36 @@ double MTPR_trainer::FindLoss(std::vector<Configuration> &training_set)
     bfgs_f = loss_;
 #endif
     return bfgs_f;
+}
+
+void MTPR_trainer::ProfileCosts(std::vector<Configuration> &training_set, int sample_count)
+{
+    // 1. Mandatory: Match species in training set to potential and allocate memory
+    // This handles MPI synchronization and calls MemAlloc() internally.
+    AddSpecies(training_set);
+
+    // 2. Ensure internal gradient buffers are sized correctly
+    loss_grad_.resize(p_mlip->CoeffCount());
+
+    // 3. Profiling loop
+    for (Configuration &cfg : training_set)
+    {
+        if (cfg.size() == 0)
+            continue;
+
+        // Warm-up: builds neighbor lists and avoids timing first-call overhead
+        AddLossGrad(cfg);
+
+        auto start = std::chrono::high_resolution_clock::now();
+
+        for (int i = 0; i < sample_count; i++)
+        {
+            AddLossGrad(cfg);
+        }
+
+        auto end = std::chrono::high_resolution_clock::now();
+
+        std::chrono::duration<double> total_time = end - start;
+        cfg.features["comp_cost"] = std::to_string(total_time.count() / (double)sample_count);
+    }
 }
