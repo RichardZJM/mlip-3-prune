@@ -15,6 +15,15 @@
 extern "C" void dposv_(const char *uplo, const int *n, const int *nrhs,
                        double *a, const int *lda, double *b, const int *ldb, int *info);
 
+extern "C" void dsyrk_(const char *uplo, const char *trans, const int *n, const int *k,
+                       const double *alpha, const double *a, const int *lda,
+                       const double *beta, double *c, const int *ldc);
+
+extern "C" void dgemv_(const char *trans, const int *m, const int *n,
+                       const double *alpha, const double *a, const int *lda,
+                       const double *x, const int *incx,
+                       const double *beta, double *y, const int *incy);
+
 class MTPR_trainer : public NonLinearRegression
 {
 private:

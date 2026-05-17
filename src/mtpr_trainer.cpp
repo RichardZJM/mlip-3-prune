@@ -99,57 +99,81 @@ void MTPR_trainer::AddToSLAE(Configuration &cfg, double weight)
         for (int ind = 0; ind < cfg.nbhs.size(); ind++)
             avef += cfg.force(ind).NormSq() / cfg.nbhs.size();
 
+    // LAPACK/BLAS configuration
+    char uplo = 'L';
+    char trans_N = 'N'; // A_blas is contiguous in 'n'. Treated as column-major n x M matrix.
+    int n_size = n;
+    double beta_1 = 1.0;
+    int inc_1 = 1;
+
     if (cfg.has_energy())
     {
+        double alpha_e = weight * wgt_energy(cfg) * d / (d + fn * avef);
+        int k_size = 1;
+
+        // Matrix update (Level 3): A^T A  => DSYRK where k = 1
+        dsyrk_(&uplo, &trans_N, &n_size, &k_size, &alpha_e, p_mlmtpr->energy_cmpnts.data(), &n_size, &beta_1, lin_matrix.data(), &n_size);
+
+        // Vector update: simple scaling is faster manually for a flat 1D vector than overhead of level 1/2 routines
+        double e_factor = alpha_e * cfg.energy;
         for (int i = 0; i < n; i++)
-            for (int j = i; j < n; j++)
-                lin_matrix[i * n + j] += weight * wgt_energy(cfg) * p_mlmtpr->energy_cmpnts[i] * p_mlmtpr->energy_cmpnts[j] * d / (d + fn * avef);
+            lin_vector[i] += e_factor * p_mlmtpr->energy_cmpnts[i];
 
-        for (int i = 0; i < n; i++)
-            lin_vector[i] += weight * wgt_energy(cfg) * p_mlmtpr->energy_cmpnts[i] * cfg.energy * d / (d + fn * avef);
-
-        lin_scalar += weight * wgt_energy(cfg) * cfg.energy * cfg.energy * d / (d + fn * avef);
-
+        lin_scalar += e_factor * cfg.energy;
         lin_eqn_count += (weight > 0) ? 1 : ((weight < 0) ? -1 : 0);
     }
 
     if ((wgt_eqtn_forces > 0) && (cfg.has_forces()))
     {
-        for (int i = 0; i < n; i++)
-            for (int j = i; j < n; j++)
-                for (int ind = 0; ind < cfg.nbhs.size(); ind++)
-                    for (int a = 0; a < 3; a++)
-                        lin_matrix[i * n + j] += weight * wgt_forces(cfg, ind, a) * p_mlmtpr->forces_cmpnts(cfg.nbhs[ind].my_ind, i, a) * p_mlmtpr->forces_cmpnts(cfg.nbhs[ind].my_ind, j, a) * d / (d + fn * avef);
+        int m_f = cfg.size() * 3;
+        double wgt_f = wgt_forces(cfg, 0, 0); // Safe to assume config-homogenous weights
+        double alpha_f = weight * wgt_f * d / (d + fn * avef);
+
+        // Matrix update (Level 3): A^T A  => DSYRK where A is M x n
+        dsyrk_(&uplo, &trans_N, &n_size, &m_f, &alpha_f, p_mlmtpr->forces_cmpnts.data(), &n_size, &beta_1, lin_matrix.data(), &n_size);
+
+        // Flatten cfg.force to standard contiguous memory to operate DGEMV over it
+        std::vector<double> F_flat(m_f);
+        for (int ind = 0; ind < cfg.size(); ++ind)
+        {
+            F_flat[ind * 3 + 0] = cfg.force(ind, 0);
+            F_flat[ind * 3 + 1] = cfg.force(ind, 1);
+            F_flat[ind * 3 + 2] = cfg.force(ind, 2);
+        }
+
+        // Vector update (Level 2): A^T F => DGEMV
+        dgemv_(&trans_N, &n_size, &m_f, &alpha_f, p_mlmtpr->forces_cmpnts.data(), &n_size, F_flat.data(), &inc_1, &beta_1, lin_vector.data(), &inc_1);
 
         for (int ind = 0; ind < cfg.size(); ind++)
         {
-            for (int i = 0; i < n; i++)
-                for (int a = 0; a < 3; a++)
-                    lin_vector[i] += weight * wgt_forces(cfg, ind, a) * p_mlmtpr->forces_cmpnts(cfg.nbhs[ind].my_ind, i, a) * cfg.force(cfg.nbhs[ind].my_ind, a) * d / (d + fn * avef);
-
             for (int a = 0; a < 3; a++)
-                lin_scalar += weight * wgt_forces(cfg, ind, a) * cfg.force(ind, a) * cfg.force(ind, a) * d / (d + fn * avef);
-
-            lin_eqn_count += 3 * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
+            {
+                lin_scalar += alpha_f * cfg.force(ind, a) * cfg.force(ind, a);
+            }
         }
+        lin_eqn_count += 3 * cfg.size() * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
     }
 
     if ((wgt_eqtn_stress > 0) && (cfg.has_stresses()))
     {
-        for (int i = 0; i < n; i++)
-            for (int j = i; j < n; j++)
-                for (int a = 0; a < 3; a++)
-                    for (int b = 0; b < 3; b++)
-                        lin_matrix[i * n + j] += weight * wgt_stress(cfg, a, b) * p_mlmtpr->stress_cmpnts(i, a, b) * p_mlmtpr->stress_cmpnts(j, a, b);
+        int m_s = 9;
+        double wgt_s = wgt_stress(cfg, 0, 0);
+        double alpha_s = weight * wgt_s;
 
-        for (int i = 0; i < n; i++)
-            for (int a = 0; a < 3; a++)
-                for (int b = 0; b < 3; b++)
-                    lin_vector[i] += weight * wgt_stress(cfg, a, b) * p_mlmtpr->stress_cmpnts(i, a, b) * cfg.stresses[a][b];
+        // Matrix update (Level 3): A^T A  => DSYRK
+        dsyrk_(&uplo, &trans_N, &n_size, &m_s, &alpha_s, p_mlmtpr->stress_cmpnts.data(), &n_size, &beta_1, lin_matrix.data(), &n_size);
+
+        std::vector<double> S_flat(9);
+        for (int a = 0; a < 3; ++a)
+            for (int b = 0; b < 3; ++b)
+                S_flat[a * 3 + b] = cfg.stresses[a][b];
+
+        // Vector update (Level 2): A^T S => DGEMV
+        dgemv_(&trans_N, &n_size, &m_s, &alpha_s, p_mlmtpr->stress_cmpnts.data(), &n_size, S_flat.data(), &inc_1, &beta_1, lin_vector.data(), &inc_1);
 
         for (int a = 0; a < 3; a++)
             for (int b = 0; b < 3; b++)
-                lin_scalar += weight * wgt_stress(cfg, a, b) * cfg.stresses[a][b] * cfg.stresses[a][b];
+                lin_scalar += alpha_s * cfg.stresses[a][b] * cfg.stresses[a][b];
 
         lin_eqn_count += 6 * ((weight > 0) ? 1 : ((weight < 0) ? -1 : 0));
     }

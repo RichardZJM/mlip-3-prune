@@ -480,51 +480,56 @@ void MLMTPR::Save(const string& filename)
     ofs.close();
 }
 
-void MLMTPR::CalcEFSComponents(Configuration& cfg)
+void MLMTPR::CalcEFSComponents(Configuration &cfg)
 {
     int n = alpha_count + species_count - 1;
 
     if (cfg.nbh_cutoff != p_RadialBasis->max_val)
         cfg.InitNbhs(p_RadialBasis->max_val);
 
-    forces_cmpnts.resize(cfg.size(), n, 3);
+    // Ensure dimension corresponding to 'n' is innermost layout index
+    forces_cmpnts.resize(cfg.size(), 3, n);
 
     FillWithZero(energy_cmpnts);
     forces_cmpnts.set(0);
+
+    // Ensure dimension corresponding to 'n' is innermost layout index
+    stress_cmpnts.resize(3, 3, n);
     stress_cmpnts.set(0);
 
     InitMagMomBasis(cfg);
 
-    for (Neighborhood& nbh : cfg.nbhs) 
+    for (Neighborhood &nbh : cfg.nbhs)
     {
         CalcBasisFuncsDers(nbh);
 
-        int type_central = type_from_atomic_number(nbh.my_type); //type_from_atomic_number() function is used here and everywhere in the mtpr.cpp to provide compatibility with absolute atomic numeration
+        int type_central = type_from_atomic_number(nbh.my_type);
 
         if (type_central >= species_count)
             throw MlipException("Too few species count in the MTP potential!");
 
         energy_cmpnts[type_central] += basis_vals[0];
 
-        for (int k = species_count; k < n; k++) {
+        for (int k = species_count; k < n; k++)
+        {
             int i = k - species_count + 1;
 
             energy_cmpnts[k] += basis_vals[i];
 
             for (int j = 0; j < nbh.count; j++)
-                for (int a = 0; a < 3; a++) {
-                    forces_cmpnts(nbh.my_ind, k, a) += basis_ders(i, j, a);
-                    forces_cmpnts(nbh.inds[j], k, a) -= basis_ders(i, j, a);
+                for (int a = 0; a < 3; a++)
+                {
+                    forces_cmpnts(nbh.my_ind, a, k) += basis_ders(i, j, a);
+                    forces_cmpnts(nbh.inds[j], a, k) -= basis_ders(i, j, a);
                 }
 
             for (int j = 0; j < nbh.count; j++)
                 for (int a = 0; a < 3; a++)
                     for (int b = 0; b < 3; b++)
-                        stress_cmpnts(k,a,b) -= basis_ders(i, j, a) * nbh.vecs[j][b];
+                        stress_cmpnts(a, b, k) -= basis_ders(i, j, a) * nbh.vecs[j][b];
         }
     }
 }
-
 void MLMTPR::CalcEComponents(Configuration& cfg)
 {
     int n = alpha_count + species_count - 1;
@@ -807,12 +812,12 @@ void MLMTPR::MemAlloc()
 
     energy_cmpnts.resize(n);
     forces_cmpnts.reserve(n * 3);
-    stress_cmpnts.resize(n,3,3);
+    stress_cmpnts.resize(3, 3, n); // Swapped dimensions to match
 
     moment_vals.resize(alpha_moments_count);
     basis_vals.resize(alpha_count);
     site_energy_ders_wrt_moments_.resize(alpha_moments_count);
-	reg_vector.resize(alpha_scalar_moments+species_count); 			//resize the regularization vector
+    reg_vector.resize(alpha_scalar_moments + species_count); // resize the regularization vector
 }
 
 MLMTPR::~MLMTPR()
