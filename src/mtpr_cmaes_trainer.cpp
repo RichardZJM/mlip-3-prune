@@ -698,7 +698,23 @@ void MTPR_cmaes_trainer::CMAESSearch(std::vector<Configuration> & /*unused*/)
 
         MPI_Bcast(&stop_code, 1, MPI_INT, 0, MPI_COMM_WORLD);
         if (stop_code != 0)
-            done = true;
+        {
+            // If stop condition is 3 ("tolfun") and cmaes_tolfun is set to a negative value (default -1.0),
+            // we bypass the exit mechanism. Conditions 1 (sigma) and 2 (covariance condition) are preserved.
+            if (stop_code == 3 && cmaes_tolfun < 0)
+            {
+                if (world_rank == 0)
+                {
+                    log << "CMA-ES: 'tolfun' convergence detected but ignored (cmaes_tolfun < 0). Continuing search.\n";
+                    MLP_LOG("cmaes", log.str());
+                    log.str("");
+                }
+            }
+            else
+            {
+                done = true;
+            }
+        }
 
         auto t_gen_end = std::chrono::high_resolution_clock::now();
         double gen_sec = std::chrono::duration<double>(t_gen_end - t_gen_start).count();

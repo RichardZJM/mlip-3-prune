@@ -1,9 +1,3 @@
-/*   This software is called MLIP for Machine Learning Interatomic Potentials.
- *   MLIP can only be used for non-commercial research and cannot be re-distributed.
- *   The use of MLIP must be acknowledged by citing appropriate references.
- *   See the LICENSE file for details.
- */
-
 #ifndef MLIP_MTPR_CMAES_TRAINER_H
 #define MLIP_MTPR_CMAES_TRAINER_H
 
@@ -39,12 +33,12 @@ public:
     int cmaes_lambda = -1;
     int cmaes_mu = -1;
     double cmaes_sigma0 = -1.0;
-    double cmaes_init_range = 2e-2;
+    double cmaes_init_range = 1;
     int cmaes_seed = 0;
 
     double cmaes_sigma_tol = 1e-11;
     double cmaes_cond_tol = 1e14;
-    double cmaes_tolfun = 1e-11;
+    double cmaes_tolfun = -1.0; // Default set to -1.0 to disable tolfun termination
 
     int cmaes_max_iter = 200;
     double cmaes_timeout = 999999999.0;
