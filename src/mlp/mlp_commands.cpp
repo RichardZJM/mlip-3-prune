@@ -8,6 +8,7 @@
 #include "../prune.h"
 #include "../masker.h"
 #include "../mtpr_trainer.h"
+#include "../mtpr_cmaes_trainer.h"
 #include "../wrapper.h"
 #include "../drivers/basic_drivers.h"
 #include "../drivers/relaxation.h"
@@ -2604,6 +2605,141 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
 
         if (mpi.rank == 0)
             Message("Profiling complete. Profiled dataset saved to: " + out_fnm);
+    }
+    END_COMMAND;
+
+    // =============================================================================
+    //  CMA-ES SEARCH COMMAND
+    //
+    //  Usage:
+    //    mlp cmaes_search potential.mtp train_set.cfg [options]
+    //
+    //  The command:
+    //    1. Loads the MTP and detects species from the training set (world-wide).
+    //    2. Constructs MTPR_cmaes_trainer with all user-specified settings.
+    //    3. Calls CMAESSearch, which:
+    //         - Builds sub-communicators (each of size subcomm_size ranks).
+    //         - Each sub-comm loads the full training set across its own ranks.
+    //         - Runs SPSO-2011 CMA-ES over radial coefficients with fast
+    //           DAD/Cholesky scaling search per candidate evaluation.
+    //         - Saves the best seed as a .mtp file for subsequent 'train' runs.
+    //
+    //  Options:
+    //    --save_to=<string>           Output .mtp filename. Default=first argument.
+    //    --subcomm_size=<int>         MPI ranks per sub-communicator. Default=1.
+    //    --cmaes_lambda=<int>         Population size. Default=-1 (auto: 4+3*ln(n)).
+    //    --cmaes_mu=<int>             Number of parents. Default=-1 (auto: lambda/2).
+    //    --cmaes_sigma0=<double>      Initial step size. Default=-1 (auto: 0.3*(ub-lb)).
+    //    --cmaes_seed=<uint>          RNG seed. Default=0 (random device).
+    //    --cmaes_sigma_tol=<double>   Stop if sigma < tol. Default=1e-11.
+    //    --cmaes_cond_tol=<double>    Stop if cond(C) > tol. Default=1e14.
+    //    --cmaes_tolfun=<double>      Stop if value range < tol. Default=1e-11.
+    //    --cmaes_max_iter=<int>       Max generations. Default=200.
+    //    --cmaes_timeout=<double>     Wall-clock timeout in seconds. Default=3600.
+    //    --energy_weight=<double>     Weight of energies in SLAE. Default=1.
+    //    --force_weight=<double>      Weight of forces in SLAE. Default=0.01.
+    //    --stress_weight=<double>     Weight of stresses in SLAE. Default=0.001.
+    //    --weight_scaling=<0|1|2>     Energy/stress weight scaling. Default=1.
+    //    --weight_scaling_forces=<0|1|2> Force weight scaling. Default=0.
+    //    --log=<string>               Log destination. Default=stdout.
+    // =============================================================================
+
+    BEGIN_COMMAND("cmaes_search",
+                  "CMA-ES-based seed search for MTP radial coefficients",
+                  "mlp cmaes_search potential.mtp train_set.cfg [options]:\n"
+                  "  Runs a CMA-ES (Hansen 2016) seed search over the radial\n"
+                  "  coefficients of potential.mtp using train_set.cfg.\n"
+                  "  The training set is distributed across sub-communicators\n"
+                  "  so candidates can be evaluated in parallel.\n"
+                  "  Linear coefficients and scaling are solved analytically\n"
+                  "  per candidate using the fast DAD/Cholesky technique.\n"
+                  "  The best seed is saved as a .mtp for subsequent 'train'.\n"
+                  "\n"
+                  "  Options:\n"
+                  "    --save_to=<string>: output filename. Default=first argument\n"
+                  "    --subcomm_size=<int>: MPI ranks per sub-comm. Default=1\n"
+                  "    --cmaes_lambda=<int>: population size. Default=-1 (auto)\n"
+                  "    --cmaes_mu=<int>: parents. Default=-1 (auto=lambda/2)\n"
+                  "    --cmaes_sigma0=<double>: initial step size. Default=-1 (auto)\n"
+                  "    --cmaes_seed=<uint>: RNG seed (0=random). Default=0\n"
+                  "    --cmaes_sigma_tol=<double>: sigma stop criterion. Default=1e-11\n"
+                  "    --cmaes_cond_tol=<double>: condition stop criterion. Default=1e14\n"
+                  "    --cmaes_tolfun=<double>: value-range stop criterion. Default=1e-11\n"
+                  "    --cmaes_max_iter=<int>: max generations. Default=200\n"
+                  "    --cmaes_timeout=<double>: wall-clock timeout (s). Default=3600\n"
+                  "    --energy_weight=<double>: weight of energies. Default=1\n"
+                  "    --force_weight=<double>: weight of forces. Default=0.01\n"
+                  "    --stress_weight=<double>: weight of stresses. Default=0.001\n"
+                  "    --weight_scaling=<0|1|2>: energy/stress weight scaling. Default=1\n"
+                  "    --weight_scaling_forces=<0|1|2>: force weight scaling. Default=0\n"
+                  "    --log=<string>: log destination. Default=stdout\n")
+    {
+        if (args.size() != 2)
+        {
+            cout << "mlp cmaes_search: 2 arguments are required\n";
+            return 1;
+        }
+
+        Settings settings;
+        settings.Modify(opts);
+
+        // Logging setup
+        if (settings["log"] == "")
+            settings["log"] = "stdout";
+        if (settings["log"] == "none")
+            settings["log"] = "";
+
+        // Output filename
+        if (settings["save_to"] == "")
+            settings["save_to"] = args[0];
+
+        // Map save_to into the cmaes_save_to setting key so ApplySettings picks it up
+        settings["cmaes_save_to"] = settings["save_to"];
+
+        SetTagLogStream("cmaes", &std::cout);
+
+        // ------------------------------------------------------------------
+        // Load MTP potential
+        // ------------------------------------------------------------------
+        MLMTPR mtp(args[0]);
+
+        // ------------------------------------------------------------------
+        // World-wide species detection from training set.
+        // We do a lightweight scan here so that p_mlmtpr has the correct
+        // species_count before MTPR_cmaes_trainer builds its search bounds.
+        // ------------------------------------------------------------------
+        {
+#ifdef MLIP_MPI
+            vector<Configuration> ts_scan = MPI_LoadBalanceCfgs(args[1]);
+#else
+            vector<Configuration> ts_scan = LoadCfgs(args[1]);
+#endif
+            // Use a temporary MTPR_trainer just to call the inherited AddSpecies
+            // (which performs the world-wide MPI species synchronisation).
+            Settings tmp_settings;
+            tmp_settings["log"] = settings["log"];
+            MTPR_trainer tmp_trainer(&mtp, tmp_settings, /*verbose=*/false);
+            tmp_trainer.AddSpecies(ts_scan);
+            // ts_scan freed here
+        }
+
+        // ------------------------------------------------------------------
+        // Construct the CMA-ES trainer and run the search
+        // ------------------------------------------------------------------
+        MTPR_cmaes_trainer cmaes_trainer(&mtp, settings, /*verbose=*/true);
+        cmaes_trainer.SetTrainFile(args[1]);
+
+        // cmaes_save_to is set via settings["cmaes_save_to"] above and applied
+        // through ApplySettings in the constructor.  Set it explicitly as a
+        // belt-and-suspenders measure in case the settings key mapping differs
+        // in this build's Settings implementation:
+        cmaes_trainer.cmaes_save_to = settings["save_to"];
+
+        // Run — training set loaded internally per sub-communicator.
+        vector<Configuration> empty;
+        cmaes_trainer.CMAESSearch(empty);
+
+        Message("cmaes_search complete");
     }
     END_COMMAND;
 

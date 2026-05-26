@@ -126,6 +126,7 @@ public:
     void Orthogonalize();                       //!<Orthogonalize the basic functions
 
     void AddSpecies(std::set<int> species, bool init_random=true);
+    std::vector<int> GetScalingDegrees(); //!< Generates the polynomial scaling degrees for the linear SLAE moments
 };
 
 

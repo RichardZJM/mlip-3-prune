@@ -44,6 +44,18 @@ private:
     Array1D bfgs_g;             // Holder of loss_function gradient in BFGS
     bool reg_init = true;       // Whether the reg_vector needs to be rebuilt (based on changing of diagonal elements of SLAE)
 
+protected:
+    void GetSLAEBuffers(std::vector<double> &out_gram,
+                        std::vector<double> &out_rhs,
+                        double &out_scalar,
+                        int &out_N) const
+    {
+        out_gram = lin_matrix;
+        out_rhs = lin_vector;
+        out_scalar = lin_scalar;
+        out_N = lin_eqn_count;
+    }
+
 public:
     int maxits = 1000;               // Max. number of steps in BFGS
     int random_perturb = 0;          // If >0, than simulatied annealing (random shifting of coefficients) is enabled

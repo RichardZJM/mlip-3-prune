@@ -1616,3 +1616,34 @@ void MLMTPR::AddSpecies(std::set<int> species, bool init_random)
 
     inited = true;
 }
+
+std::vector<int> MLMTPR::GetScalingDegrees()
+{
+    int n = LinSize();
+    std::vector<int> deg(n, 0);
+
+    // Bootstrap polynomial degrees for moments
+    std::vector<int> m_deg(alpha_moments_count, 0);
+
+    // Basic moments scale linearly with the radial functions (degree 1)
+    for (int i = 0; i < alpha_index_basic_count; i++)
+    {
+        m_deg[i] = 1;
+    }
+
+    // Composite moments add the degrees of their constituents
+    for (int i = 0; i < alpha_index_times_count; i++)
+    {
+        m_deg[alpha_index_times[i][3]] =
+            m_deg[alpha_index_times[i][0]] +
+            m_deg[alpha_index_times[i][1]];
+    }
+
+    // Species offsets have degree 0. Mapped scalar moments take their computed degree.
+    for (int k = species_count; k < n; k++)
+    {
+        deg[k] = m_deg[alpha_moment_mapping[k - species_count]];
+    }
+
+    return deg;
+}

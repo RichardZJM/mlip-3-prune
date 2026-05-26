@@ -13,6 +13,7 @@
 #include <iostream>
 #include <algorithm>
 #include "configuration.h"
+#include <numeric>
 
 using namespace std;
 
@@ -3051,10 +3052,6 @@ vector<Configuration> MPI_LoadCfgs(const string &filename, const int max_count)
         cfgs.emplace_back(Configuration());
     return cfgs;
 }
-
-// configuration.cpp
-
-#include <numeric>
 
 std::vector<Configuration> MPI_LoadBalanceCfgs(const std::string &filename, const int max_count)
 {
