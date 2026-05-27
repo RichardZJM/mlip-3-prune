@@ -284,7 +284,7 @@ double MTPR_cmaes_trainer::ApplyDScaleAndSolve_(double scaling,
         }
     }
 
-    // Apply diagonal regularization proportional to element size, matching SolveSLAE logic
+    // Apply diagonal regularization proportional to element size
     for (int i = 0; i < n; ++i)
     {
         double reg_val = reg_param * std::max(1.0, G_scaled[i * n + i]);
@@ -461,8 +461,9 @@ MTPR_cmaes_trainer::EvalResult MTPR_cmaes_trainer::EvaluateCandidate_(
     std::vector<double> saved(p_mlmtpr_->regression_coeffs.begin(),
                               p_mlmtpr_->regression_coeffs.begin() + rsize);
 
+    // Apply raw proposed coefficients without Orthogonalize().
+    // The linear solver will happily map onto any non-orthogonal basis functions.
     PosToRadialCoeffs_(position, *p_mlmtpr_);
-    p_mlmtpr_->Orthogonalize();
 
     const int n = p_mlmtpr_->alpha_count - 1 + p_mlmtpr_->species_count;
     slae_n_ = n;
@@ -525,7 +526,16 @@ MTPR_cmaes_trainer::EvalResult MTPR_cmaes_trainer::EvaluateCandidate_(
         }
 
         double total_err = base_scalar_ - 2.0 * x_r + x_G_x;
-        result.loss = std::max(0.0, total_err);
+
+        // L2 weight decay on radial coefficients to prevent scale drift since
+        // they are no longer being step-by-step orthogonalized/normalized.
+        double l2_norm = 0.0;
+        for (double val : position)
+        {
+            l2_norm += val * val;
+        }
+
+        result.loss = std::max(0.0, total_err) + (1e-6 * l2_norm);
 
         if (!std::isfinite(result.loss))
             result.loss = 1e300;
@@ -753,6 +763,8 @@ void MTPR_cmaes_trainer::CMAESSearch(std::vector<Configuration> & /*unused*/)
 
     PosToRadialCoeffs_(best_pos, *p_mlmtpr_);
     p_mlmtpr_->scaling = best_scaling;
+
+    // Orthogonalize the FINAL result so the saved MTP is standard and well-behaved
     p_mlmtpr_->Orthogonalize();
 
     if (world_rank == 0)
@@ -764,6 +776,7 @@ void MTPR_cmaes_trainer::CMAESSearch(std::vector<Configuration> & /*unused*/)
         log.str("");
     }
 
+    // Crucial: Retrain linear coefficients one last time on the now-orthogonalized basis
     LinOptimize(local_cfgs);
 
     if (world_rank == 0)

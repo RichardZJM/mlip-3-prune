@@ -33,7 +33,7 @@ public:
     int cmaes_lambda = -1;
     int cmaes_mu = -1;
     double cmaes_sigma0 = -1.0;
-    double cmaes_init_range = 1;
+    double cmaes_init_range = 1e-2;
     int cmaes_seed = 0;
 
     double cmaes_sigma_tol = 1e-11;
