@@ -31,6 +31,9 @@ void AnyBasis::ReadBasis(std::ifstream & ifs)
         ifs >> tmpstr;
     }
 
+    if (tmpstr == "radial_envelope")
+        return;
+
     if (tmpstr != "min_val" && tmpstr != "min_dist")
         ERROR("Error reading .mtp file");
     ifs.ignore(2);

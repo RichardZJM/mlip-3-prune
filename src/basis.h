@@ -20,7 +20,11 @@ public:
 
     double min_val;
     double max_val;
-    double scaling = 1.0; // all functions are multiplied by scaling 
+    double scaling = 1.0; // all functions are multiplied by scaling
+
+    // These are usually one but are use by LRBS_Chebyshev to smoothly switch the constant term
+    double species_basis_val = 1.0;
+    double species_basis_der = 1.0;
 
     // values and derivatives, set by calc(val)
     std::vector<double> vals;
@@ -36,11 +40,22 @@ public:
         return "RBAny";
     }
 
-    void ReadBasis(std::ifstream& ifs);
-    void WriteBasis(std::ofstream& ofs);
+    virtual void ReadBasis(std::ifstream &ifs);
+    virtual void WriteBasis(std::ofstream &ofs);
 
     virtual void Calc(double val) = 0; // calculates values
     virtual void CalcDers(double val) = 0; // calculates values and derivatives
+
+    virtual void Calc(double val, int t1, int t2) { Calc(val); };                          // calculates values for
+    virtual void CalcDers(double val, int t1, int t2, int neigh_index) { CalcDers(val); }; // calculates values and derivatives
+
+    virtual int GetMinimumNeighbor()
+    {
+        ERROR("Control sequence error. Verify LRBSChebyshev!");
+        return -1;
+    }
+    virtual double GetAndResetSpeciesVal() { return 1.0; };
+    virtual double GetAndResetSpeciesDerFac(const std::vector<double> &dists) { return 0.0; };
 };
 
 

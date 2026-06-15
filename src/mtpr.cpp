@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <random>
 #include "mtpr.h"
-
+#include "lrbs_chebyshev.h"
 
 using namespace std;
 
@@ -84,6 +84,10 @@ void MLMTPR::Load(const string& filename)
     }
     else if (rbasis_type == "RBChebyshev") {
         p_RadialBasis = new RB_Chebyshev(ifs);
+    }
+    else if (rbasis_type == "LRBSChebyshev")
+    {
+        p_RadialBasis = new LRBS_Chebyshev(ifs);
     }
     else if (rbasis_type == "RBChebyshev_repuls") {
         p_RadialBasis = new RB_Chebyshev_repuls(ifs);
@@ -587,16 +591,14 @@ void MLMTPR::CalcBasisFuncs(Neighborhood& nbh, std::vector<double>& bf_vals)
             throw MlipException("Too few species count in the MTP potential!");
 
     for (int j = 0; j < nbh.count; j++) {
-        const Vector3& NeighbVect_j = nbh.vecs[j];
+        const Vector3 &NeighbVect_j = nbh.vecs[j];
+        int type_outer = type_from_atomic_number(nbh.types[j]);
+        p_RadialBasis->CalcDers(nbh.dists[j], type_central, type_outer, j);
 
-        // calculates vals and ders for j-th atom in the neighborhood
-        p_RadialBasis->CalcDers(nbh.dists[j]);
         for (int xi = 0; xi < p_RadialBasis->size; xi++)
             p_RadialBasis->vals[xi] *= scaling;
         for (int xi = 0; xi < p_RadialBasis->size; xi++)
             p_RadialBasis->ders[xi] *= scaling;
-
-        int type_outer = type_from_atomic_number(nbh.types[j]);
         
         if (type_outer>=species_count)
             throw MlipException("Too few species count in the MTP potential!");
@@ -649,7 +651,7 @@ void MLMTPR::CalcBasisFuncs(Neighborhood& nbh, std::vector<double>& bf_vals)
     }
     // Next: copying all b_i corresponding to scalars into separate arrays,
     // basis_vals and basis_ders
-    bf_vals[0] = 1.0;  // setting the constant basis function
+    bf_vals[0] = p_RadialBasis->GetAndResetSpeciesVal(); // setting the constant basis function
 
     for (int i = 0; i < alpha_scalar_moments; i++) 
         bf_vals[1 + i] = moment_vals[alpha_moment_mapping[i]];
@@ -688,7 +690,9 @@ void MLMTPR::CalcBasisFuncsDers(const Neighborhood& nbh)
             throw MlipException("Too few species count in the MTP potential!");
 
     for (int j = 0; j < nbh.count; j++) {
-        const Vector3& NeighbVect_j = nbh.vecs[j];
+        const Vector3 &NeighbVect_j = nbh.vecs[j];
+        int type_outer = type_from_atomic_number(nbh.types[j]);
+        p_RadialBasis->CalcDers(nbh.dists[j], type_central, type_outer, j);
 
         // calculates vals and ders for j-th atom in the neighborhood
         p_RadialBasis->CalcDers(nbh.dists[j]);
@@ -696,8 +700,6 @@ void MLMTPR::CalcBasisFuncsDers(const Neighborhood& nbh)
             p_RadialBasis->vals[xi] *= scaling;
         for (int xi = 0; xi < p_RadialBasis->size; xi++)
             p_RadialBasis->ders[xi] *= scaling;
-
-        int type_outer = type_from_atomic_number(nbh.types[j]);
 
         if (type_outer>=species_count)
             throw MlipException("Too few species count in the MTP potential!");
@@ -788,7 +790,7 @@ void MLMTPR::CalcBasisFuncsDers(const Neighborhood& nbh)
     }
     // Next: copying all b_i corresponding to scalars into separate arrays,
     // basis_vals and basis_ders
-    basis_vals[0] = 1.0;  // setting the constant basis function
+    basis_vals[0] = p_RadialBasis->GetAndResetSpeciesVal();
 
     if (basis_ders.size2 != nbh.count) // TODO: remove this check?
         basis_ders.resize(alpha_count, nbh.count, 3);
@@ -876,10 +878,10 @@ void MLMTPR::CalcSiteEnergyDers(const Neighborhood& nbh)
             throw MlipException("Too few species count in the MTP potential!");
 
     for (int j = 0; j < nbh.count; j++) {
-        const Vector3& NeighbVect_j = nbh.vecs[j];
+        const Vector3 &NeighbVect_j = nbh.vecs[j];
+        int type_outer = type_from_atomic_number(nbh.types[j]);
+        p_RadialBasis->CalcDers(nbh.dists[j], type_central, type_outer, j);
 
-        // calculates vals and ders for j-th atom in the neighborhood
-        p_RadialBasis->CalcDers(nbh.dists[j]);
         for (int xi = 0; xi < p_RadialBasis->size; xi++)
             p_RadialBasis->vals[xi] *= scaling;
         for (int xi = 0; xi < p_RadialBasis->size; xi++)
@@ -892,8 +894,6 @@ void MLMTPR::CalcSiteEnergyDers(const Neighborhood& nbh)
             for (int a = 0; a < 3; a++)
                 coords_powers_[k][a] = coords_powers_[k - 1][a] * NeighbVect_j[a];
         }
-
-        int type_outer = type_from_atomic_number(nbh.types[j]);
 
         if (type_outer>=species_count)
             throw MlipException("Too few species count in the MTP potential!");
@@ -997,7 +997,16 @@ void MLMTPR::CalcSiteEnergyDers(const Neighborhood& nbh)
     }
 
     // convolving with coefficients
-    buff_site_energy_ += linear_coeffs(type_central);
+    buff_site_energy_ += linear_coeffs(type_central) * p_RadialBasis->GetAndResetSpeciesVal();
+    if (p_RadialBasis->GetRBTypeString() == "LRBSChebyshev" && nbh.count > 0)
+    {
+        double min_force_fac = p_RadialBasis->GetAndResetSpeciesDerFac(nbh.dists);
+        int minimum_neighbor = p_RadialBasis->GetMinimumNeighbor();
+        for (int a = 0; a < 3; a++)
+        {
+            buff_site_energy_ders_[minimum_neighbor][a] += min_force_fac * nbh.vecs[minimum_neighbor][a];
+        }
+    }
 
     for (int i = 0; i < alpha_scalar_moments; i++)
         buff_site_energy_ += linear_coeffs(species_count + i) * moment_vals[alpha_moment_mapping[i]];
@@ -1106,10 +1115,10 @@ void MLMTPR::AccumulateCombinationGrad( const Neighborhood& nbh,
             throw MlipException("Too few species count in the MTP potential!");
 
         for (int j = 0; j < nbh.count; j++) {
-            const Vector3& NeighbVect_j = nbh.vecs[j];
+            const Vector3 &NeighbVect_j = nbh.vecs[j];
+            int type_outer = type_from_atomic_number(nbh.types[j]);
+            p_RadialBasis->CalcDers(nbh.dists[j], type_central, type_outer, j);
 
-            // calculates vals and ders for j-th atom in the neighborhood
-            p_RadialBasis->CalcDers(nbh.dists[j]);
             for (int xi = 0; xi < p_RadialBasis->size; xi++)
                 p_RadialBasis->vals[xi] *= scaling;
             for (int xi = 0; xi < p_RadialBasis->size; xi++)
@@ -1122,8 +1131,6 @@ void MLMTPR::AccumulateCombinationGrad( const Neighborhood& nbh,
                 for (int a = 0; a < 3; a++)
                     auto_coords_powers_[k][a] = auto_coords_powers_[k - 1][a] * NeighbVect_j[a];
             }
-
-            int type_outer = type_from_atomic_number(nbh.types[j]); 
 
             for (int i = 0; i < alpha_index_basic_count; i++) {
 
@@ -1242,7 +1249,17 @@ void MLMTPR::AccumulateCombinationGrad( const Neighborhood& nbh,
             mom_val[alpha_index_times[i][3]] += val2 * val0 * val1;
         }
         // convolving with coefficients
-        buff_site_energy_ += linear_coeffs(type_central);
+        buff_site_energy_ += linear_coeffs(type_central) * p_RadialBasis->GetAndResetSpeciesVal();
+        // Accummulate forces for the
+        if (p_RadialBasis->GetRBTypeString() == "LRBSChebyshev" && nbh.count > 0)
+        {
+            double min_force_fac = p_RadialBasis->GetAndResetSpeciesDerFac(nbh.dists);
+            int minimum_neighbor = p_RadialBasis->GetMinimumNeighbor();
+            for (int a = 0; a < 3; a++)
+            {
+                buff_site_energy_ders_[minimum_neighbor][a] += min_force_fac * nbh.vecs[minimum_neighbor][a];
+            }
+        }
         for (int i = 0; i < alpha_scalar_moments; i++)
             buff_site_energy_ += linear_coeffs(species_count + i) * mom_val[alpha_moment_mapping[i]];
 
