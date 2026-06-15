@@ -195,8 +195,9 @@ void LRBS_Chebyshev::WriteBasis(std::ofstream &ofs)
             ofs << "        " << t1 << "-" << t2 << std::endl;
             // Writes cleaner 3-tuple format to the MTP basis file
             ofs << "            {" << mindists(t1, t2) << ", "
-                << cutoffs(t1, t2) << ", "
-                << peaks(t1, t2) << "}" << std::endl;
+                << peaks(t1, t2) << ", "
+                << cutoffs(t1, t2)
+                << "}" << std::endl;
         }
     }
 
