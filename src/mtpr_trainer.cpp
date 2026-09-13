@@ -36,26 +36,85 @@ void MTPR_trainer::SymmetrizeSLAE()
             lin_matrix[j * n + i] = lin_matrix[i * n + j];
 }
 
+// In "relative" mode the ridge is proportional to the matrix element size: adding lambda*diag(H) to H is
+// exactly uniform Tikhonov performed in the Jacobi-scaled space, which makes lambda dimensionless and
+// invariant to rescaling of individual basis functions. In "absolute" mode lambda is applied uniformly.
+// The result is per-configuration normalized (hence /TS_size), matching how reg_vector enters the
+// nonlinear loss penalty in MLMTPR::AddPenaltyGrad, which is accumulated once per configuration.
+double MTPR_trainer::RegTarget(int i, int n, int TS_size) const
+{
+    if (reg_absolute)
+        return reg_param;
+
+    return reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+}
+
 void MTPR_trainer::SolveSLAE(int TS_size)
 {
     SymmetrizeSLAE();
 
     int n = p_mlmtpr->alpha_count - 1 + p_mlmtpr->species_count; // Matrix size
 
-    if (!reg_init)                  // checking the condition of changing the regularization
-        for (int i = 0; i < n; i++) // TODO: why __max, not std::max?
-            if ((p_mlmtpr->reg_vector[i] < 1e-2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size) || (p_mlmtpr->reg_vector[i] > 1e2 * reg_param * __max(1, lin_matrix[i * n + i]) / TS_size))
+    bool reg_drifted = false; // whether this call is an actual regularization *update*, not the initial assignment
+
+    // In absolute mode the target is constant, so the band below never trips after the initial assignment
+    // and the adaptive update (along with the BFGS Hessian reset it triggers) disables itself.
+    if (!reg_init) // checking the condition of changing the regularization
+        for (int i = 0; i < n; i++)
+        {
+            // The bounds keep the original association order (scale * lambda * diag / TS_size) rather than
+            // scaling RegTarget(): BFGS here is chaotic enough that a last-ulp change in this comparison
+            // shifts when the Hessian is reset and diverges the whole trajectory.
+            double lo, hi;
+            if (reg_absolute)
+            {
+                lo = 1e-2 * reg_param;
+                hi = 1e2 * reg_param;
+            }
+            else
+            {
+                const double diag = std::max(1.0, lin_matrix[i * n + i]);
+                lo = 1e-2 * reg_param * diag / TS_size;
+                hi = 1e2 * reg_param * diag / TS_size;
+            }
+
+            if ((p_mlmtpr->reg_vector[i] < lo) || (p_mlmtpr->reg_vector[i] > hi))
             {
                 reg_init = true;
+                reg_drifted = true;
                 logstrm1 << "Regularization parameters updated. Hessian in BFGS is reset" << endl;
                 MLP_LOG("fit", logstrm1.str());
                 logstrm1.str("");
                 break;
             }
+        }
 
     if (reg_init) // if we need to change the regularization
+    {
         for (int i = 0; i < n; i++)
-            p_mlmtpr->reg_vector[i] = reg_param * __max(1, lin_matrix[i * n + i]) / TS_size; // assigning a regularization proportional to the matrix element size
+            p_mlmtpr->reg_vector[i] = RegTarget(i, n, TS_size);
+
+        // Report what was actually applied, so the shrinkage of a run is reconstructable from the log. Only the
+        // first assignment and genuine drift updates are worth a line: reg_init also stays set throughout
+        // Rescale(), whose repeated LinOptimize() probes would otherwise bury the condition number table.
+        if (n > 0 && (!reg_logged || reg_drifted))
+        {
+            reg_logged = true;
+            double reg_min = p_mlmtpr->reg_vector[0];
+            double reg_max = p_mlmtpr->reg_vector[0];
+            for (int i = 1; i < n; i++)
+            {
+                reg_min = std::min(reg_min, p_mlmtpr->reg_vector[i]);
+                reg_max = std::max(reg_max, p_mlmtpr->reg_vector[i]);
+            }
+
+            logstrm1 << "Regularization (" << reg_mode << ", lambda=" << reg_param
+                     << "): per-cfg reg_vector in [" << reg_min << ", " << reg_max
+                     << "], diagonal shrinkage in [" << reg_min * TS_size << ", " << reg_max * TS_size << "]" << endl;
+            MLP_LOG("fit", logstrm1.str());
+            logstrm1.str("");
+        }
+    }
 
     // Regularization
     for (int i = 0; i < n; i++)
@@ -395,7 +454,7 @@ void MTPR_trainer::AddSpecies(std::vector<Configuration> &training_set)
         p_mlmtpr->MemAlloc(); // resize EFS components and basis functions
     }
 
-    p_mlmtpr->reg_vector.resize(p_mlmtpr->alpha_scalar_moments + p_mlmtpr->species_count); // resize the regularization vector
+    p_mlmtpr->reg_vector.resize(p_mlmtpr->alpha_scalar_moments + p_mlmtpr->species_count, reg_param); // resize the regularization vector, seeding any new entries
 
     if (!no_mindist_update)
     {

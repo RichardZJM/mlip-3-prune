@@ -43,6 +43,8 @@ private:
     double bfgs_f;              // Holder of loss_function value in BFGS
     Array1D bfgs_g;             // Holder of loss_function gradient in BFGS
     bool reg_init = true;       // Whether the reg_vector needs to be rebuilt (based on changing of diagonal elements of SLAE)
+    bool reg_absolute = false;  // Cached form of reg_mode (avoids string comparison inside SolveSLAE loops)
+    bool reg_logged = false;    // Whether the effective regularization has been reported at least once
 
 public:
     int maxits = 1000;               // Max. number of steps in BFGS
@@ -52,7 +54,9 @@ public:
     bool init_random = false;        // Random initialization of parameters for an uninitialized potential
     bool no_mindist_update = false;  // Automatically adjust mindist in the potential according to the training set
     bool auto_minmax_magmom = false; // Automatically adjust min_magmom and max_magmom in the potential according to the training set
-    const double reg_param = 1e-10;  // Regularization parameter for SLAE solving
+    double reg_param = -1.0;         // Ridge (Tikhonov) parameter lambda. <0 means "not supplied", resolved in the ctor
+    std::string reg_mode = "relative"; // "relative": lambda*max(1,H_ii), i.e. uniform Tikhonov in the Jacobi-scaled
+                                       // space, so lambda is dimensionless. "absolute": uniform lambda on every coefficient
 
     void InitSettings() // Sets correspondence between variables and setting names in settings file
     {
@@ -62,24 +66,47 @@ public:
         MakeSetting(init_random, "init_random");
         MakeSetting(no_mindist_update, "no_mindist_update");
         MakeSetting(auto_minmax_magmom, "auto-minmax-magmom");
+        MakeSetting(reg_param, "regularization");
+        MakeSetting(reg_mode, "regularization_mode");
     };
 
     MTPR_trainer(MLMTPR *_p_mlmtpr, Settings settings, const bool verbose = true) : NonLinearRegression(_p_mlmtpr, settings, verbose), p_mlmtpr(_p_mlmtpr) // Initialization of the settings
     {
         InitSettings();
         ApplySettings(settings);
+
+        // Resolve the mode and the default lambda before printing, so the log shows what is actually used
+        if (reg_mode == "relative")
+            reg_absolute = false;
+        else if (reg_mode == "absolute")
+            reg_absolute = true;
+        else
+            ERROR("Invalid regularization_mode \"" + reg_mode + "\" (expected \"relative\" or \"absolute\")");
+
+        if (reg_param < 0)
+        {
+            // No unit-independent default exists for an absolute lambda, so it must be given explicitly
+            if (reg_absolute)
+                ERROR("regularization_mode=absolute requires an explicit --regularization=<double>");
+            reg_param = 1e-10; // historical default, relative mode only
+        }
+
         if (verbose)
             PrintSettings();
 
-        int n = p_mlmtpr->alpha_count + p_mlmtpr->species_count - 1; // Matrix size
-        for (int i = 0; i < n; i++)
-            p_mlmtpr->reg_vector[i] = reg_param; // Initialize the regularization vector
+        // Placeholder seed: overwritten by the first SolveSLAE(), which needs the SLAE diagonal to compute the
+        // real values. It exists so that a loss evaluation preceding the first linear solve (mlp calculate_loss,
+        // or the BFGS steps before the first LinOptimize) sees a sane penalty. Filling over the vector's actual
+        // size avoids writing past the end when the potential's species have not been extended yet - AddSpecies()
+        // resizes it later and seeds the new tail itself.
+        std::fill(p_mlmtpr->reg_vector.begin(), p_mlmtpr->reg_vector.end(), reg_param);
     };
     ~MTPR_trainer() {};
 
     void ClearSLAE();                                      // Setting SLAE Matrix and right part to zero
     void SymmetrizeSLAE();                                 // Symmetrization of the SLAE matrix before solving (only upper right part is filled during adding or removing configuration to regression)
     void SolveSLAE(int TS_size);                           // Find the corresponding linear coefficients
+    double RegTarget(int i, int n, int TS_size) const;     // Target per-configuration ridge for coefficient i, given the current SLAE diagonal
     void AddToSLAE(Configuration &cfg, double weight = 1); // Adds configuration to regression SLAE. If weight = -1 removes from regression
 
     void AddSpecies(std::vector<Configuration> &training_set);                                                                     // Extend the species in the MTPR potential if needed
