@@ -326,8 +326,11 @@ std::vector<double> Masker::SolveTheta(const std::string &config_file, const std
             A[i * n_active + j] = xtwx[idx_i * n_features + idx_j] * scales[idx_i] * scales[idx_j];
         }
 
-        // Add Tikhonov regularization
-        A[i * n_active + i] += reg;
+        // Add Tikhonov regularization. The first species_count features are the per-element energy
+        // intercepts (always active, see active_idx above); penalizing them would tie the fit to the
+        // arbitrary energy zero of the training set, so they are left unpenalized.
+        if (idx_i >= species_count)
+            A[i * n_active + i] += reg;
     }
 
     char uplo = 'U';

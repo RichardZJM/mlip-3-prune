@@ -41,12 +41,14 @@ void MTPR_trainer::SymmetrizeSLAE()
 // invariant to rescaling of individual basis functions. In "absolute" mode lambda is applied uniformly.
 // The result is per-configuration normalized (hence /TS_size), matching how reg_vector enters the
 // nonlinear loss penalty in MLMTPR::AddPenaltyGrad, which is accumulated once per configuration.
+// Indices below species_count are the per-element energy intercepts, which are exempt from the user's
+// lambda and get only species_reg_floor - see the comment on that constant in mtpr_trainer.h.
 double MTPR_trainer::RegTarget(int i, int n, int TS_size) const
 {
-    if (reg_absolute)
-        return reg_param;
+    if (!RegRelative(i))
+        return RegLambda(i);
 
-    return reg_param * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
+    return RegLambda(i) * std::max(1.0, lin_matrix[i * n + i]) / TS_size;
 }
 
 void MTPR_trainer::SolveSLAE(int TS_size)
@@ -65,17 +67,18 @@ void MTPR_trainer::SolveSLAE(int TS_size)
             // The bounds keep the original association order (scale * lambda * diag / TS_size) rather than
             // scaling RegTarget(): BFGS here is chaotic enough that a last-ulp change in this comparison
             // shifts when the Hessian is reset and diverges the whole trajectory.
+            const double lambda = RegLambda(i);
             double lo, hi;
-            if (reg_absolute)
+            if (!RegRelative(i))
             {
-                lo = 1e-2 * reg_param;
-                hi = 1e2 * reg_param;
+                lo = 1e-2 * lambda;
+                hi = 1e2 * lambda;
             }
             else
             {
                 const double diag = std::max(1.0, lin_matrix[i * n + i]);
-                lo = 1e-2 * reg_param * diag / TS_size;
-                hi = 1e2 * reg_param * diag / TS_size;
+                lo = 1e-2 * lambda * diag / TS_size;
+                hi = 1e2 * lambda * diag / TS_size;
             }
 
             if ((p_mlmtpr->reg_vector[i] < lo) || (p_mlmtpr->reg_vector[i] > hi))
@@ -97,20 +100,24 @@ void MTPR_trainer::SolveSLAE(int TS_size)
         // Report what was actually applied, so the shrinkage of a run is reconstructable from the log. Only the
         // first assignment and genuine drift updates are worth a line: reg_init also stays set throughout
         // Rescale(), whose repeated LinOptimize() probes would otherwise bury the condition number table.
-        if (n > 0 && (!reg_logged || reg_drifted))
+        // Only the basis block is summarized: the species entries are held at the floor by construction and
+        // would otherwise widen the reported range by orders of magnitude without saying anything about the fit.
+        const int first_basis = p_mlmtpr->species_count;
+        if (n > first_basis && (!reg_logged || reg_drifted))
         {
             reg_logged = true;
-            double reg_min = p_mlmtpr->reg_vector[0];
-            double reg_max = p_mlmtpr->reg_vector[0];
-            for (int i = 1; i < n; i++)
+            double reg_min = p_mlmtpr->reg_vector[first_basis];
+            double reg_max = p_mlmtpr->reg_vector[first_basis];
+            for (int i = first_basis + 1; i < n; i++)
             {
                 reg_min = std::min(reg_min, p_mlmtpr->reg_vector[i]);
                 reg_max = std::max(reg_max, p_mlmtpr->reg_vector[i]);
             }
 
             logstrm1 << "Regularization (" << reg_mode << ", lambda=" << reg_param
-                     << "): per-cfg reg_vector in [" << reg_min << ", " << reg_max
-                     << "], diagonal shrinkage in [" << reg_min * TS_size << ", " << reg_max * TS_size << "]" << endl;
+                     << "): basis per-cfg reg_vector in [" << reg_min << ", " << reg_max
+                     << "], diagonal shrinkage in [" << reg_min * TS_size << ", " << reg_max * TS_size
+                     << "]; species coefficients exempt (floor " << species_reg_floor << ")" << endl;
             MLP_LOG("fit", logstrm1.str());
             logstrm1.str("");
         }
@@ -454,7 +461,11 @@ void MTPR_trainer::AddSpecies(std::vector<Configuration> &training_set)
         p_mlmtpr->MemAlloc(); // resize EFS components and basis functions
     }
 
-    p_mlmtpr->reg_vector.resize(p_mlmtpr->alpha_scalar_moments + p_mlmtpr->species_count, reg_param); // resize the regularization vector, seeding any new entries
+    // Resize the regularization vector, seeding any new entries. AddSpecies shifts the linear block, so a new
+    // slot can land anywhere; reseed the species range explicitly so the intercepts keep only the floor.
+    p_mlmtpr->reg_vector.resize(p_mlmtpr->alpha_scalar_moments + p_mlmtpr->species_count, reg_param);
+    for (int i = 0; i < p_mlmtpr->species_count; i++)
+        p_mlmtpr->reg_vector[i] = species_reg_floor;
 
     if (!no_mindist_update)
     {

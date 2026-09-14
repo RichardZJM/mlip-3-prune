@@ -58,6 +58,14 @@ public:
     std::string reg_mode = "relative"; // "relative": lambda*max(1,H_ii), i.e. uniform Tikhonov in the Jacobi-scaled
                                        // space, so lambda is dimensionless. "absolute": uniform lambda on every coefficient
 
+    // The species coefficients are per-element energy intercepts: they multiply the constant basis function,
+    // contribute nothing to forces or stresses, and absorb the arbitrary DFT energy zero. Penalizing them would
+    // make the fit depend on that arbitrary reference and, since they are orders of magnitude larger than the
+    // basis coefficients, would let their penalty term dominate the whole loss. They are therefore exempt from
+    // the user's lambda and carry only this stability floor, which exists so that the Cholesky solve survives a
+    // fixed-stoichiometry training set, where the species columns are exactly collinear.
+    static constexpr double species_reg_floor = 1e-10;
+
     void InitSettings() // Sets correspondence between variables and setting names in settings file
     {
         MakeSetting(maxits, "iteration_limit");
@@ -99,7 +107,8 @@ public:
         // or the BFGS steps before the first LinOptimize) sees a sane penalty. Filling over the vector's actual
         // size avoids writing past the end when the potential's species have not been extended yet - AddSpecies()
         // resizes it later and seeds the new tail itself.
-        std::fill(p_mlmtpr->reg_vector.begin(), p_mlmtpr->reg_vector.end(), reg_param);
+        for (int i = 0; i < (int)p_mlmtpr->reg_vector.size(); i++)
+            p_mlmtpr->reg_vector[i] = RegLambda(i);
     };
     ~MTPR_trainer() {};
 
@@ -107,6 +116,14 @@ public:
     void SymmetrizeSLAE();                                 // Symmetrization of the SLAE matrix before solving (only upper right part is filled during adding or removing configuration to regression)
     void SolveSLAE(int TS_size);                           // Find the corresponding linear coefficients
     double RegTarget(int i, int n, int TS_size) const;     // Target per-configuration ridge for coefficient i, given the current SLAE diagonal
+    double RegLambda(int i) const                         // Ridge lambda applied to coefficient i: the species intercepts only ever see the floor
+    {
+        return (i < p_mlmtpr->species_count) ? species_reg_floor : reg_param;
+    }
+    bool RegRelative(int i) const                         // Whether coefficient i is scaled by the SLAE diagonal. The species floor is always relative,
+    {                                                     // so it stays a pure numerical jitter rather than a unit-dependent absolute shift
+        return !reg_absolute || (i < p_mlmtpr->species_count);
+    }
     void AddToSLAE(Configuration &cfg, double weight = 1); // Adds configuration to regression SLAE. If weight = -1 removes from regression
 
     void AddSpecies(std::vector<Configuration> &training_set);                                                                     // Extend the species in the MTPR potential if needed

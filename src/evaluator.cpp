@@ -35,7 +35,11 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::
         }
 
         // 3. Bake Regularization directly into the scaled training matrix diagonal!
-        xtwx_train[i * n_features + i] += reg;
+        //    The first n_species features are the per-element energy intercepts: they absorb the arbitrary
+        //    energy zero of the training set, so shrinking them would make the selected basis depend on that
+        //    reference. They are always active (see masker.cpp) and are left unpenalized.
+        if (i >= n_species)
+            xtwx_train[i * n_features + i] += reg;
     }
 
     if (rank == 0)
