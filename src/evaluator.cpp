@@ -1,9 +1,11 @@
 #include "evaluator.h"
+#include "mtpr.h"
 #include <iostream>
 #include <iomanip>
 #include <set>
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 // --- SSE Calculator ---
 SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::vector<double> &xtwy_train_, double ytwy_train_,
@@ -37,9 +39,10 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::
         // 3. Bake Regularization directly into the scaled training matrix diagonal!
         //    The first n_species features are the per-element energy intercepts: they absorb the arbitrary
         //    energy zero of the training set, so shrinking them would make the selected basis depend on that
-        //    reference. They are always active (see masker.cpp) and are left unpenalized.
-        if (i >= n_species)
-            xtwx_train[i * n_features + i] += reg;
+        //    reference. They are always active (see calculate()) and get only the stability floor - not zero,
+        //    because a fixed-stoichiometry dataset makes the species columns exactly collinear and the scaled
+        //    block singular.
+        xtwx_train[i * n_features + i] += (i < n_species) ? SPECIES_REG_FLOOR : reg;
     }
 
     if (rank == 0)
@@ -84,6 +87,14 @@ SSECalculator::SSECalculator(const std::vector<double> &xtwx_train_, const std::
     std::vector<char> all_ones(n_var, 1);
     base_sse = 1.0;
     base_sse = calculate(all_ones.data());
+
+    // Every candidate carries the species columns, so a training matrix that cannot be factorized makes
+    // calculate() return INFINITY for all of them. Left alone, base_sse=INFINITY turns every subsequent
+    // fitness into INFINITY/INFINITY = NaN and the GA runs to completion on garbage without complaining.
+    if (!std::isfinite(base_sse))
+        throw std::runtime_error("Base SSE is not finite: the regularized training matrix could not be "
+                                 "factorized. This usually means the design matrix is rank deficient - e.g. "
+                                 "a fixed-stoichiometry training set, where the species columns are collinear.");
 
     if (rank == 0)
     {

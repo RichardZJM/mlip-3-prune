@@ -10,6 +10,13 @@
 #ifndef MLIP_MTPR_H
 #define MLIP_MTPR_H
 
+// Ridge floor for the species (per-element intercept) coefficients. They are exempt from the user's
+// lambda - see the comment in mtpr_trainer.h - but must keep a small floor so the Cholesky solve
+// survives a fixed-stoichiometry training set, where the species columns are exactly collinear.
+// It is always applied relative to the diagonal entry, so in the Jacobi-scaled space used by the
+// pruning tools (where every diagonal is 1) it is added directly.
+constexpr double SPECIES_REG_FLOOR = 1e-10;
+
 class MLMTPR : virtual public AnyLocalMLIP
 {
 protected:

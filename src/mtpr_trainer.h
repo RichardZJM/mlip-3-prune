@@ -62,9 +62,7 @@ public:
     // contribute nothing to forces or stresses, and absorb the arbitrary DFT energy zero. Penalizing them would
     // make the fit depend on that arbitrary reference and, since they are orders of magnitude larger than the
     // basis coefficients, would let their penalty term dominate the whole loss. They are therefore exempt from
-    // the user's lambda and carry only this stability floor, which exists so that the Cholesky solve survives a
-    // fixed-stoichiometry training set, where the species columns are exactly collinear.
-    static constexpr double species_reg_floor = 1e-10;
+    // the user's lambda and carry only SPECIES_REG_FLOOR (declared in mtpr.h, shared with the pruning tools).
 
     void InitSettings() // Sets correspondence between variables and setting names in settings file
     {
@@ -118,7 +116,7 @@ public:
     double RegTarget(int i, int n, int TS_size) const;     // Target per-configuration ridge for coefficient i, given the current SLAE diagonal
     double RegLambda(int i) const                         // Ridge lambda applied to coefficient i: the species intercepts only ever see the floor
     {
-        return (i < p_mlmtpr->species_count) ? species_reg_floor : reg_param;
+        return (i < p_mlmtpr->species_count) ? SPECIES_REG_FLOOR : reg_param;
     }
     bool RegRelative(int i) const                         // Whether coefficient i is scaled by the SLAE diagonal. The species floor is always relative,
     {                                                     // so it stays a pure numerical jitter rather than a unit-dependent absolute shift

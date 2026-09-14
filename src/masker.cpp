@@ -328,9 +328,9 @@ std::vector<double> Masker::SolveTheta(const std::string &config_file, const std
 
         // Add Tikhonov regularization. The first species_count features are the per-element energy
         // intercepts (always active, see active_idx above); penalizing them would tie the fit to the
-        // arbitrary energy zero of the training set, so they are left unpenalized.
-        if (idx_i >= species_count)
-            A[i * n_active + i] += reg;
+        // arbitrary energy zero of the training set, so they get only the stability floor - not zero,
+        // which would leave the block singular for a fixed-stoichiometry dataset.
+        A[i * n_active + i] += (idx_i < species_count) ? SPECIES_REG_FLOOR : reg;
     }
 
     char uplo = 'U';

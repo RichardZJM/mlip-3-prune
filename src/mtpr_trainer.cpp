@@ -42,7 +42,7 @@ void MTPR_trainer::SymmetrizeSLAE()
 // The result is per-configuration normalized (hence /TS_size), matching how reg_vector enters the
 // nonlinear loss penalty in MLMTPR::AddPenaltyGrad, which is accumulated once per configuration.
 // Indices below species_count are the per-element energy intercepts, which are exempt from the user's
-// lambda and get only species_reg_floor - see the comment on that constant in mtpr_trainer.h.
+// lambda and get only SPECIES_REG_FLOOR - see the comment on the exemption in mtpr_trainer.h.
 double MTPR_trainer::RegTarget(int i, int n, int TS_size) const
 {
     if (!RegRelative(i))
@@ -117,7 +117,7 @@ void MTPR_trainer::SolveSLAE(int TS_size)
             logstrm1 << "Regularization (" << reg_mode << ", lambda=" << reg_param
                      << "): basis per-cfg reg_vector in [" << reg_min << ", " << reg_max
                      << "], diagonal shrinkage in [" << reg_min * TS_size << ", " << reg_max * TS_size
-                     << "]; species coefficients exempt (floor " << species_reg_floor << ")" << endl;
+                     << "]; species coefficients exempt (floor " << SPECIES_REG_FLOOR << ")" << endl;
             MLP_LOG("fit", logstrm1.str());
             logstrm1.str("");
         }
@@ -465,7 +465,7 @@ void MTPR_trainer::AddSpecies(std::vector<Configuration> &training_set)
     // slot can land anywhere; reseed the species range explicitly so the intercepts keep only the floor.
     p_mlmtpr->reg_vector.resize(p_mlmtpr->alpha_scalar_moments + p_mlmtpr->species_count, reg_param);
     for (int i = 0; i < p_mlmtpr->species_count; i++)
-        p_mlmtpr->reg_vector[i] = species_reg_floor;
+        p_mlmtpr->reg_vector[i] = SPECIES_REG_FLOOR;
 
     if (!no_mindist_update)
     {
