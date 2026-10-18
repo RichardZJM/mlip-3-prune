@@ -824,8 +824,13 @@ bool Commands(const string &command, vector<string> &args, map<string, string> &
                 mtp.CalcEFS(cfg_copy);
                 errmon.AddToCompare(cfg, cfg_copy);
             }
+        // pad with an empty cfg so every rank makes the same number of collective calls;
+        // cfg still holds the last loaded configuration (Load() doesn't clear it at EOF)
         if ((count % mpi.size != 0) && mpi.rank >= (count % mpi.size))
-            errmon.AddToCompare(cfg, cfg);
+        {
+            Configuration empty_cfg;
+            errmon.AddToCompare(empty_cfg, empty_cfg);
+        }
 
         errmon.GetReport();
     }
