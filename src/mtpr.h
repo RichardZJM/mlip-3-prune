@@ -6,6 +6,8 @@
 
 #include "basic_mlip.h"
 #include "common/multidimensional_arrays.h"
+#include <array>
+#include <map>
 
 #ifndef MLIP_MTPR_H
 #define MLIP_MTPR_H
@@ -39,7 +41,32 @@ protected:
     std::vector<double> site_energy_ders_wrt_moments_;                      //Temporary vector for site_energy calculation
     std::vector<double> dist_powers_;                                       //Temporary vector for site_energy calculation
     std::vector<Vector3> coords_powers_;                                    //Temporary vector for site_energy calculation
-    void CalcSiteEnergyDers(const Neighborhood& nbh) override;              //Site_energy calculation
+    void CalcSiteEnergyDers(const Neighborhood& nbh) override;              //Site_energy calculation (with the optional site switch)
+    void CalcSiteEnergyDers_raw(const Neighborhood& nbh);                   //Pure MTP site energy V_i (no site switch)
+
+    // ---- SITE SWITCH (optional "site_switch" block of the potential file), see the end of mtpr.cpp ----
+    //   E_i = w_i * V_i + (nlh_fixed ? (1 - w_i) * eps_i : 0),   eps_i = 1/2 sum_j phi(r_ij)
+    struct SiteSwitchVals                                                   //switch quantities of one neighborhood
+    {
+        double w = 1.0;                                                     //weight of the MTP site energy
+        double eps = 0.0;                                                   //NLH site energy (only if nlh_fixed)
+        std::vector<Vector3> dw;                                            //dw_i/d(vec r_ij)
+        std::vector<Vector3> deps;                                          //d eps_i/d(vec r_ij) (only if nlh_fixed)
+    };
+    SiteSwitchVals ssw_;                                                    //Temporary: switch of the current neighborhood
+    std::vector<Vector3> ssw_wgts_;                                         //Temporary: rescaled se_ders_weights
+    std::vector<double> ssw_phi_, ssw_dphi_;                                //Temporary: phi(r_ij), phi'(r_ij)
+    void NLHPair(int type1, int type2, double r, double& phi, double& dphi);//screened Coulomb pair potential and its derivative
+    bool CalcSiteSwitch(const Neighborhood& nbh, SiteSwitchVals& s);        //returns false if w_i == 1 (pure MTP atom)
+    void BlendSiteEnergy(const Neighborhood& nbh, const SiteSwitchVals& s, bool have_mtp); //V_i, dV_i in the buffers -> E_i, dE_i
+    void LoadSiteSwitch(std::ifstream& ifs, std::string& next_keyword);     //parses the block (after the "site_switch" keyword)
+    void SaveSiteSwitch(std::ofstream& ofs);                                //writes the block
+    void CalcBasisFuncs_raw(Neighborhood& Neighborhood, std::vector<double>& bf_vals);
+    void CalcBasisFuncsDers_raw(const Neighborhood& Neighborhood);
+    void AccumulateCombinationGrad_raw( const Neighborhood& nbh,
+                                        std::vector<double>& out_grad_accumulator,
+                                        const double se_weight,
+                                        const Vector3* se_ders_weights);
 
     Array2D moment_jacobian_wrt_magmom_neigh; //!<Temporary vector for calculation of site energy  derivatives w.r.t. magnetic moments of neighboring atoms  
     Array1D moment_jacobian_wrt_magmom_central; //!<Temporary vector for calculation of site energy  derivatives w.r.t. magnetic moments of central atom
@@ -52,6 +79,19 @@ public:
     int mbasis_size = 1;
 
     bool inited = false;                                //Whether potential has already been trained
+
+    // ---- SITE SWITCH settings (all read from / written to the potential file) ----
+    enum class SiteSwitch { NONE, NLH_ENERGY, DISTANCE };
+    enum class SiteEvalMode { FULL, MTP_ONLY, FIXED_ONLY };  // FULL: E_i;  MTP_ONLY: w_i*V_i;  FIXED_ONLY: (1-w_i)*eps_i
+    SiteSwitch site_switch = SiteSwitch::NONE;          // criterion selecting w_i (NONE: plain MTP)
+    SiteEvalMode site_eval_mode = SiteEvalMode::FULL;   // which part of the site energy is evaluated (used by the trainer)
+    double switch_on = 0.0;                             // MTP fully on  (eV for nlh_energy: q <= switch_on;  A for distance: r >= switch_on)
+    double switch_off = 0.0;                            // MTP fully off (eV for nlh_energy: q >= switch_off; A for distance: r <= switch_off)
+    double softmax_p = 8.0;                             // nlh_energy: q_i = (sum_j phi_ij^p)^(1/p)
+    bool switch_log_scale = true;                       // nlh_energy: interpolate in ln(q) (true) or in q (false)
+    bool nlh_fixed = false;                             // add the fixed NLH part (1 - w_i) * eps_i
+    std::map<std::pair<int, int>, std::array<double, 8>> nlh_pairs; // (t1<=t2) -> {Z1, Z2, a1, b1, a2, b2, a3, b3}
+    bool HasFixedPart() const { return site_switch != SiteSwitch::NONE && nlh_fixed; }
 
     std::vector<int> atomic_numbers;                    // Array of atomic numbers present in current potential. These can be relative and absolute ones
 

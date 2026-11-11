@@ -819,6 +819,94 @@ void MTPR_trainer::Rescale(std::vector<Configuration> &training_set)
     } while (ind != 2);
 }
 
+// ---- SITE SWITCH with nlh_fixed = true (see the end of mtpr.cpp) ----
+// The fixed part F = sum_i (1 - w_i) * eps_i of the energy does not depend on the trainable coefficients.
+// For the duration of the training it is subtracted from the reference energy/forces/stresses of the
+// configurations held by this rank, and the potential evaluates only the MTP part sum_i w_i * V_i.
+namespace
+{
+    struct FixedPartBackup      // original reference data of one training configuration
+    {
+        double energy;
+        Matrix3 stresses;
+        std::vector<Vector3> forces;
+    };
+
+    void SubtractFixedPart(MLMTPR *p_mlmtpr, std::vector<Configuration> &training_set, std::vector<FixedPartBackup> &backup)
+    {
+        backup.clear();
+        if (!p_mlmtpr->HasFixedPart())
+            return;
+
+        int affected = 0;               // number of configurations with a non-zero fixed part
+        double max_energy = 0.0;        // largest fixed energy
+        p_mlmtpr->site_eval_mode = MLMTPR::SiteEvalMode::FIXED_ONLY;
+        backup.resize(training_set.size());
+        for (size_t k = 0; k < training_set.size(); k++)
+        {
+            Configuration &cfg = training_set[k];
+            Configuration fixed = cfg;
+            p_mlmtpr->CalcEFS(fixed);       // energy, forces and stresses of the fixed part only
+            if (fixed.energy != 0.0)
+                affected++;
+            max_energy = std::max(max_energy, fabs(fixed.energy));
+
+            backup[k].energy = cfg.energy;
+            backup[k].stresses = cfg.stresses;
+            if (cfg.has_energy())
+                cfg.energy -= fixed.energy;
+            if (cfg.has_forces())
+            {
+                backup[k].forces.resize(cfg.size());
+                for (int i = 0; i < cfg.size(); i++)
+                {
+                    backup[k].forces[i] = cfg.force(i);
+                    for (int a = 0; a < 3; a++)
+                        cfg.force(i, a) -= fixed.force(i, a);
+                }
+            }
+            if (cfg.has_stresses())
+                for (int a = 0; a < 3; a++)
+                    for (int b = 0; b < 3; b++)
+                        cfg.stresses[a][b] -= fixed.stresses[a][b];
+        }
+        p_mlmtpr->site_eval_mode = MLMTPR::SiteEvalMode::MTP_ONLY;
+
+        int affected_total = affected;
+        double max_energy_total = max_energy;
+#ifdef MLIP_MPI
+        MPI_Allreduce(&affected, &affected_total, 1, MPI_INT, MPI_SUM, mpi.comm);
+        MPI_Allreduce(&max_energy, &max_energy_total, 1, MPI_DOUBLE, MPI_MAX, mpi.comm);
+#endif
+        if (mpi.rank == 0)
+        {
+            std::stringstream msg;
+            msg << "Site switch: fixed NLH part subtracted from the training data (non-zero for " << affected_total
+                << " configurations, max |E_fixed| = " << max_energy_total << " eV); fitting the MTP part only" << std::endl;
+            MLP_LOG("fit", msg.str());
+        }
+    }
+
+    void RestoreFixedPart(MLMTPR *p_mlmtpr, std::vector<Configuration> &training_set, const std::vector<FixedPartBackup> &backup)
+    {
+        if (!p_mlmtpr->HasFixedPart())
+            return;
+
+        for (size_t k = 0; k < backup.size() && k < training_set.size(); k++)
+        {
+            Configuration &cfg = training_set[k];
+            if (cfg.has_energy())
+                cfg.energy = backup[k].energy;
+            if (cfg.has_forces())
+                for (int i = 0; i < cfg.size(); i++)
+                    cfg.force(i) = backup[k].forces[i];
+            if (cfg.has_stresses())
+                cfg.stresses = backup[k].stresses;
+        }
+        p_mlmtpr->site_eval_mode = MLMTPR::SiteEvalMode::FULL;
+    }
+}
+
 void MTPR_trainer::Train(std::vector<Configuration> &training_set)
 {
     // Start global profiling
@@ -837,6 +925,10 @@ void MTPR_trainer::Train(std::vector<Configuration> &training_set)
 
     // extend the coefficients of the potential to handle the new species from the database
     AddSpecies(training_set);
+
+    // SITE SWITCH with a fixed NLH part: the potential is trained on the reference data minus the fixed part
+    std::vector<FixedPartBackup> fixed_part_backup;
+    SubtractFixedPart(p_mlmtpr, training_set, fixed_part_backup);
 
     // random initialization of radial coefficients
     if (init_random && !p_mlmtpr->inited)
@@ -946,6 +1038,9 @@ void MTPR_trainer::Train(std::vector<Configuration> &training_set)
             if (mlip_fitted_fnm != "")
                 p_mlmtpr->Save(mlip_fitted_fnm);
     }
+
+    // SITE SWITCH: give the training set its original reference data back, evaluate the full potential again
+    RestoreFixedPart(p_mlmtpr, training_set, fixed_part_backup);
 
 #ifdef MLIP_MPI
     MPI_Barrier(mpi.comm);
